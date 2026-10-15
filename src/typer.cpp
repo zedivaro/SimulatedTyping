@@ -51,22 +51,6 @@ bool InterruptibleSleep(unsigned ms) {
     return true;
 }
 
-// 注入 1~2 个 UTF-16 码元（先全部按下，再全部抬起）。
-void PressUnicode(const wchar_t* units, int count) {
-    INPUT in[4]{};
-    for (int k = 0; k < count; ++k) {
-        in[k].type = INPUT_KEYBOARD;
-        in[k].ki.wScan = static_cast<WORD>(units[k]);
-        in[k].ki.dwFlags = KEYEVENTF_UNICODE;
-    }
-    for (int k = 0; k < count; ++k) {
-        in[count + k].type = INPUT_KEYBOARD;
-        in[count + k].ki.wScan = static_cast<WORD>(units[k]);
-        in[count + k].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
-    }
-    SendInput(static_cast<UINT>(count * 2), in, sizeof(INPUT));
-}
-
 // 释放用户物理按住的修饰键，避免注入内容被解释成快捷键。
 // 同时抬起通用键与 L/R 具体键：不同程序读取不同槽位，未按下的键注入 up 无害。
 // 返回 false 表示注入被系统阻断（UIPI 提权窗口、安全桌面等），调用方应放弃本次模拟。
@@ -82,7 +66,9 @@ bool ReleaseModifiers() {
     return SendInput(6, in, sizeof(INPUT)) == 6;
 }
 
-void ExecuteAction(const keysim::Action& a) {
+// 注入一个动作。返回 false 表示注入被系统丢弃（如输入队列满）：调用方
+// 应立即中止本次模拟——「占位 X 恒在光标右侧」的不变量已不可信。
+bool ExecuteAction(const keysim::Action& a) {
     switch (a.kind) {
     case keysim::ActionKind::TapVk: {
         // 单次 SendInput 原子生效：进程若在动作间被终止，不会残留按下态的键。
@@ -92,12 +78,24 @@ void ExecuteAction(const keysim::Action& a) {
         in[0].ki.dwFlags = a.extended ? KEYEVENTF_EXTENDEDKEY : 0;
         in[1] = in[0];
         in[1].ki.dwFlags |= KEYEVENTF_KEYUP;
-        SendInput(2, in, sizeof(INPUT));
-        break;
+        return SendInput(2, in, sizeof(INPUT)) == 2;
     }
-    case keysim::ActionKind::Unicode:
-        PressUnicode(a.units, a.unitCount);
-        break;
+    case keysim::ActionKind::Unicode: {
+        // 注入 1~2 个 UTF-16 码元（先全部按下，再全部抬起）。
+        INPUT in[4]{};
+        for (int k = 0; k < a.unitCount; ++k) {
+            in[k].type = INPUT_KEYBOARD;
+            in[k].ki.wScan = static_cast<WORD>(a.units[k]);
+            in[k].ki.dwFlags = KEYEVENTF_UNICODE;
+        }
+        for (int k = 0; k < a.unitCount; ++k) {
+            in[a.unitCount + k].type = INPUT_KEYBOARD;
+            in[a.unitCount + k].ki.wScan = static_cast<WORD>(a.units[k]);
+            in[a.unitCount + k].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+        }
+        return SendInput(static_cast<UINT>(a.unitCount * 2), in, sizeof(INPUT)) ==
+               static_cast<UINT>(a.unitCount * 2);
+    }
     case keysim::ActionKind::CtrlBackspace: {
         // 单次 SendInput 原子生效：进程若在动作间被终止，不会残留半开的 Ctrl。
         INPUT in[4]{};
@@ -111,10 +109,10 @@ void ExecuteAction(const keysim::Action& a) {
         in[3].type = INPUT_KEYBOARD;
         in[3].ki.wVk = VK_CONTROL;
         in[3].ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput(4, in, sizeof(INPUT));
-        break;
+        return SendInput(4, in, sizeof(INPUT)) == 4;
     }
     }
+    return true;
 }
 
 DWORD WINAPI TyperThreadProc(LPVOID) {
@@ -135,9 +133,10 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
         }
         Sleep(15); // 等待修饰键释放状态在目标程序中生效
 
+        bool leaderDone = false;
+        bool deleteSent = false;
         try {
             const std::vector<keysim::ActionGroup> groups = keysim::ExpandTextGroups(text);
-            bool leaderDone = false;
             bool aborted = false;
             for (const keysim::ActionGroup& group : groups) {
                 size_t completed = 0;
@@ -150,7 +149,12 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
                         aborted = true; // 软件正在退出
                         break;
                     }
-                    ExecuteAction(a);
+                    if (!ExecuteAction(a)) {
+                        // 注入失败：占位 X 恒在光标右侧的不变量已不可信，
+                        // 立即中止且不计入已完成数，避免结尾 Delete 误删文档内容。
+                        aborted = true;
+                        break;
+                    }
                     ++completed;
                     if (!InterruptibleSleep(g_speedMs.load(std::memory_order_relaxed))) {
                         aborted = true;
@@ -164,7 +168,8 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
                 if (aborted) {
                     // 中止清理：立即（不按速度停顿）补注清除残留辅助键的动作
                     // （撤销未就位的占位 X / 补删换行后的 Space），期间不再
-                    // 响应中止，保证清理完整。
+                    // 响应中止，保证清理完整。清理动作本身注入失败按尽力
+                    // 而为处理（ExecuteAction 不抛异常）。
                     for (const keysim::Action& a :
                          keysim::AbortCleanup(group, completed)) {
                         ExecuteAction(a);
@@ -175,10 +180,16 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
             if (leaderDone) {
                 // 模拟结束或中止：删除光标右侧的占位字符 X。
                 ExecuteAction(keysim::PlaceholderDeleteAction());
+                deleteSent = true;
             }
         } catch (...) {
             // 内存不足等异常：放弃本次模拟，避免异常穿出线程过程触发
             // std::terminate 静默杀死整个常驻进程。
+        }
+        if (leaderDone && !deleteSent) {
+            // 异常路径收尾：异常可能发生在展开或清理阶段，此时占位 X 仍在
+            // 光标右侧，尽力补发结尾 Delete（ExecuteAction 不抛异常）。
+            ExecuteAction(keysim::PlaceholderDeleteAction());
         }
 
         ReleaseModifiers(); // 收尾/中止时确保不残留逻辑按下的修饰键（尽力而为）

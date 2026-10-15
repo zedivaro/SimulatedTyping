@@ -158,7 +158,7 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
 
 } // namespace
 
-bool InitKeyboardHook(HWND hwndOwner) {
+bool InitInputHooks(HWND hwndOwner) {
     g_hwndOwner = hwndOwner;
     g_hKeyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc,
                                         GetModuleHandleW(nullptr), 0);

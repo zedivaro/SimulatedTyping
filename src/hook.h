@@ -1,11 +1,12 @@
-// hook.h —— 低级键盘钩子：截获 Ctrl+V / Ctrl+Shift+V。
+// hook.h —— 低级键盘与鼠标钩子。
 #pragma once
 #include <windows.h>
 
-// 在调用线程上安装 WH_KEYBOARD_LL 钩子（该线程必须运行消息循环）。
-bool InitKeyboardHook(HWND hwndOwner);
+// 在调用线程上安装 WH_KEYBOARD_LL 与 WH_MOUSE_LL 钩子（该线程必须运行
+// 消息循环）。任一安装失败即回滚并返回 false。
+bool InitInputHooks(HWND hwndOwner);
 
-// 卸载钩子。
+// 卸载全部钩子。
 void ShutdownKeyboardHook();
 
 // 通知钩子：自有模态 UI（托盘菜单/速度对话框）当前打开。

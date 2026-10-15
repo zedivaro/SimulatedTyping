@@ -159,8 +159,10 @@ void ShowTrayMenu() {
         return; // 菜单/对话框打开期间，模态循环仍会派发托盘回调，防止重入
     }
     if (TypingActive()) {
-        // 防止剩余注入落进自己的菜单/对话框（文本中的 Enter 会被模态循环
-        // 翻译成默认按钮，可能把剪贴板内容当作速度写进注册表）。
+        // 仅注入/触摸输入（LLMHF_INJECTED 放行）可在此处到达：物理鼠标
+        // 点击在模拟中被钩子吞掉，托盘菜单无法经物理点击打开。作为兜底，
+        // 中止在途模拟，防止剩余注入落进自己的菜单/对话框（文本中的 Enter
+        // 会被模态循环翻译成默认按钮，可能把剪贴板内容当作速度写进注册表）。
         RequestTypingAbort();
     }
     HMENU menu = CreatePopupMenu();
@@ -280,9 +282,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         NotifyFatal(L"模拟线程创建失败，程序即将退出。");
         return 1;
     }
-    if (!InitKeyboardHook(g_hwnd)) {
+    if (!InitInputHooks(g_hwnd)) {
         ShutdownTyper();
-        NotifyFatal(L"键盘钩子安装失败（可能被安全策略限制），程序即将退出。");
+        NotifyFatal(L"键盘/鼠标钩子安装失败（可能被安全策略限制），程序即将退出。");
         return 1;
     }
     if (!AddTrayIcon()) {
@@ -303,8 +305,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         DispatchMessageW(&msg);
     }
 
-    ShutdownTyper();          // 先停模拟（吞 V 保护覆盖整个收尾期），再卸钩子
-    ShutdownKeyboardHook();
+    ShutdownTyper();          // 先停模拟线程（阻塞等待期间 LL 回调本就不可达，
+    ShutdownKeyboardHook();   // 不存在“吞 V 保护”窗口），再卸载键盘/鼠标钩子
     if (g_nid.hIcon) {
         DestroyIcon(g_nid.hIcon);
         g_nid.hIcon = nullptr;

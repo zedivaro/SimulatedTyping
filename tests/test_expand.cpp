@@ -178,6 +178,74 @@ int main() {
         }
     }
 
+    // 12. 结束动作契约：Delete 键、扩展键
+    {
+        Action d = PlaceholderDeleteAction();
+        CHECK(IsVk(d, VK_DELETE) && d.extended);
+    }
+
+    // 13. 文本中段的 CRLF 分组与扁平顺序
+    {
+        auto groups = ExpandTextGroups(L"a\r\nb");
+        CHECK(groups.size() == 4);
+        if (groups.size() == 4) {
+            CHECK(groups[1].kind == ActionGroupKind::Char);
+            CHECK(groups[2].kind == ActionGroupKind::Newline && groups[2].actions.size() == 3);
+            CHECK(groups[3].kind == ActionGroupKind::Char);
+        }
+        auto a = ExpandText(L"a\r\nb");
+        CHECK(a.size() == 2 + 1 + 3 + 1);
+        if (a.size() == 7) {
+            CHECK(IsUnicode(a[2], L'a'));
+            CHECK(IsVk(a[3], VK_RETURN));
+            CHECK(IsUnicode(a[6], L'b'));
+        }
+    }
+
+    // 14. 孤立代理按单码元透传（末尾高代理、单独低代理）
+    {
+        auto g1 = ExpandTextGroups(std::wstring(1, L'\xD852'));
+        CHECK(g1.size() == 2);
+        if (g1.size() == 2) {
+            CHECK(g1[1].actions.size() == 1 && g1[1].actions[0].unitCount == 1 &&
+                  g1[1].actions[0].units[0] == 0xD852);
+        }
+        auto g2 = ExpandTextGroups(std::wstring(1, L'\xDF62'));
+        CHECK(g2.size() == 2);
+        if (g2.size() == 2) {
+            CHECK(g2[1].actions.size() == 1 && g2[1].actions[0].unitCount == 1 &&
+                  g2[1].actions[0].units[0] == 0xDF62);
+        }
+    }
+
+    // 15. extended 负向断言：Enter/Space/Backspace 不得误标扩展键
+    {
+        auto a = ExpandText(L"\n");
+        CHECK(a.size() == 5);
+        if (a.size() == 5) {
+            CHECK(IsVk(a[2], VK_RETURN) && !a[2].extended);
+            CHECK(IsVk(a[3], VK_SPACE) && !a[3].extended);
+        }
+        auto groups = ExpandTextGroups(L"x");
+        CHECK(groups.size() == 2);
+        if (groups.size() == 2) {
+            // Backspace 只出现在 Leader 组的中止清理里，同样不得标扩展键
+            auto c = AbortCleanup(groups[0], 1);
+            CHECK(c.size() == 1 && IsVk(c[0], VK_BACK) && !c[0].extended);
+        }
+    }
+
+    // 16. 制表符混在串中的顺序
+    {
+        auto a = ExpandText(L"a\tb");
+        CHECK(a.size() == 5);
+        if (a.size() == 5) {
+            CHECK(IsUnicode(a[2], L'a'));
+            CHECK(IsVk(a[3], VK_TAB));
+            CHECK(IsUnicode(a[4], L'b'));
+        }
+    }
+
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures == 0) std::printf("ALL TESTS PASSED\n");
     return g_failures == 0 ? 0 : 1;
