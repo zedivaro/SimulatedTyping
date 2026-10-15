@@ -93,6 +93,27 @@ int main() {
         }
     }
 
+    // 6c. "\r\r"：两个孤立 \r，两次换行
+    {
+        auto a = ExpandText(L"\r\r");
+        CHECK(a.size() == 6);
+        if (a.size() == 6) {
+            CHECK(IsVk(a[0], VK_RETURN));
+            CHECK(IsVk(a[3], VK_RETURN));
+        }
+    }
+
+    // 6d. "a\r\nb"：CRLF 在文本中间只算一次换行
+    {
+        auto a = ExpandText(L"a\r\nb");
+        CHECK(a.size() == 5 + 3 + 5);
+        if (a.size() == 5 + 3 + 5) {
+            CHECK(IsUnicode(a[2], L'a'));
+            CHECK(IsVk(a[5], VK_RETURN));
+            CHECK(IsUnicode(a[10], L'b'));
+        }
+    }
+
     // 7. 制表符：连续四个 Space
     {
         auto a = ExpandText(L"\t");
@@ -121,6 +142,7 @@ int main() {
         auto a = ExpandText(std::wstring(pair, 2));
         CHECK(a.size() == 5);
         if (a.size() == 5) {
+            CHECK(IsUnicode(a[0], L'#'));
             CHECK(IsVk(a[1], VK_LEFT));
             CHECK(a[2].kind == ActionKind::Unicode && a[2].unitCount == 2);
             if (a[2].unitCount == 2) {
@@ -128,6 +150,7 @@ int main() {
                 CHECK(a[2].units[1] == 0xDF62);
             }
             CHECK(IsVk(a[3], VK_RIGHT));
+            CHECK(IsVk(a[4], VK_BACK));
         }
     }
 
@@ -161,6 +184,9 @@ int main() {
             if (a[2].unitCount == 1) CHECK(a[2].units[0] == 0xDF62);
         }
     }
+
+    // 14. 空格自身走五连（Unicode 注入，而非 TapVk VK_SPACE——与 '\t' 一字之差语义不同）
+    CheckCharTrick(ExpandText(L" "), L' ');
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures == 0) std::printf("ALL TESTS PASSED\n");

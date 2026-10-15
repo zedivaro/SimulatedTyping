@@ -4,8 +4,8 @@
 //   换行 '\n'  -> Enter、Space、Ctrl+Backspace
 //   制表 '\t'  -> 连续四个 Space
 //   其他字符   -> '#'、方向左键、该字符、方向右键、Backspace
-// 其中 '\r' 被跳过（剪贴板中的 "\r\n" 因此只算一次换行），
-// UTF-16 代理对被当作一个字符整体注入。
+// 其中 "\r\n" 中的 '\r' 被跳过（只算一次换行），孤立的 '\r'（旧 Mac 行尾）
+// 也按一次换行处理；UTF-16 代理对被当作一个字符整体注入。
 #pragma once
 #include <string>
 #include <vector>

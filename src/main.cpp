@@ -14,6 +14,7 @@ namespace {
 constexpr UINT WM_APP_TRAY = WM_APP + 1;      // 托盘回调消息
 constexpr int IDM_SPEED = 2001;               // 菜单：修改打字速度
 constexpr int IDM_EXIT = 2002;                // 菜单：退出
+constexpr UINT kTrayIconId = 1;               // 托盘图标 ID（与 NIM_DELETE 一致）
 constexpr wchar_t kMutexName[] = L"Local\\SimulatedTyping.SingleInstance";
 constexpr wchar_t kRegistryKey[] = L"Software\\SimulatedTyping";
 constexpr wchar_t kRegistryValue[] = L"SpeedMs";
@@ -24,6 +25,11 @@ HWND g_hwnd = nullptr;
 NOTIFYICONDATAW g_nid = {};
 UINT g_msgTaskbarCreated = 0;
 HANDLE g_singleInstanceMutex = nullptr;
+
+// 致命初始化失败：托盘尚未建立，只能用消息框告知后退出。
+void NotifyFatal(const wchar_t* message) {
+    MessageBoxW(nullptr, message, kWindowTitle, MB_OK | MB_ICONERROR);
+}
 
 // ---------------------------------------------------------------------------
 // 速度设置（注册表持久化，HKCU\Software\SimulatedTyping\SpeedMs）
@@ -104,7 +110,7 @@ INT_PTR CALLBACK SpeedDialogProc(HWND dialog, UINT msg, WPARAM wParam, LPARAM lP
 // 托盘
 // ---------------------------------------------------------------------------
 
-void AddTrayIcon() {
+bool AddTrayIcon() {
     if (g_nid.hIcon) {
         DestroyIcon(g_nid.hIcon); // TaskbarCreated 重加图标前先释放旧句柄
         g_nid.hIcon = nullptr;
@@ -112,14 +118,16 @@ void AddTrayIcon() {
     ZeroMemory(&g_nid, sizeof(g_nid));
     g_nid.cbSize = sizeof(g_nid);
     g_nid.hWnd = g_hwnd;
-    g_nid.uID = 1;
+    g_nid.uID = kTrayIconId;
     g_nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     g_nid.uCallbackMessage = WM_APP_TRAY;
-    g_nid.hIcon = static_cast<HICON>(LoadImageW(g_hInst, MAKEINTRESOURCEW(IDI_APP),
-                                                IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
+    // 按系统小图标尺寸加载，避免高 DPI 下任务栏内缩放发糊。
+    g_nid.hIcon = static_cast<HICON>(LoadImageW(
+        g_hInst, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
     lstrcpynW(g_nid.szTip, kWindowTitle,
               sizeof(g_nid.szTip) / sizeof(g_nid.szTip[0]));
-    Shell_NotifyIconW(NIM_ADD, &g_nid);
+    return Shell_NotifyIconW(NIM_ADD, &g_nid) != FALSE;
 }
 
 void RemoveTrayIcon() {
@@ -127,14 +135,19 @@ void RemoveTrayIcon() {
         NOTIFYICONDATAW nid = {};
         nid.cbSize = sizeof(nid);
         nid.hWnd = g_hwnd;
-        nid.uID = 1;
+        nid.uID = kTrayIconId;
         Shell_NotifyIconW(NIM_DELETE, &nid);
     }
 }
 
 void ShowTrayMenu() {
+    static bool g_trayMenuOpen = false;
+    if (g_trayMenuOpen) {
+        return; // 速度对话框开着时，模态循环仍会派发托盘回调，防止重入
+    }
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
+    g_trayMenuOpen = true;
     AppendMenuW(menu, MF_STRING, IDM_SPEED, L"修改打字速度");
     AppendMenuW(menu, MF_STRING, IDM_EXIT, L"退出 Simulated Typing");
 
@@ -147,6 +160,7 @@ void ShowTrayMenu() {
                                          pt.x, pt.y, g_hwnd, nullptr);
     DestroyMenu(menu);
     PostMessageW(g_hwnd, WM_NULL, 0, 0);
+    g_trayMenuOpen = false;
 
     if (command == IDM_SPEED) {
         DialogBoxParamW(g_hInst, MAKEINTRESOURCEW(IDD_SPEED), g_hwnd, SpeedDialogProc, 0);
@@ -187,7 +201,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
 
     // 单实例保护：同时运行两份会导致按键被模拟两遍。
     g_singleInstanceMutex = CreateMutexW(nullptr, TRUE, kMutexName);
-    if (!g_singleInstanceMutex) return 1;
+    if (!g_singleInstanceMutex) {
+        NotifyFatal(L"无法创建单实例互斥体，程序即将退出。");
+        return 1;
+    }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         MessageBoxW(nullptr, L"Simulated Typing 已在运行。", kWindowTitle,
                     MB_OK | MB_ICONINFORMATION);
@@ -207,22 +224,38 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     wc.hIconSm = wc.hIcon;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = L"SimulatedTyping.MainWindow";
-    if (!RegisterClassExW(&wc)) return 1;
+    if (!RegisterClassExW(&wc)) {
+        NotifyFatal(L"窗口类注册失败，程序即将退出。");
+        return 1;
+    }
 
     // 隐藏窗口：只承载托盘回调与消息循环，从不显示。
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, kWindowTitle,
                              WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                              0, 0, nullptr, nullptr, hInstance, nullptr);
-    if (!g_hwnd) return 1;
+    if (!g_hwnd) {
+        NotifyFatal(L"窗口创建失败，程序即将退出。");
+        return 1;
+    }
 
     g_msgTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
 
-    if (!InitTyper()) return 1;
-    if (!InitKeyboardHook(g_hwnd)) {
-        ShutdownTyper();
+    if (!InitTyper()) {
+        NotifyFatal(L"模拟线程创建失败，程序即将退出。");
         return 1;
     }
-    AddTrayIcon();
+    if (!InitKeyboardHook(g_hwnd)) {
+        ShutdownTyper();
+        NotifyFatal(L"键盘钩子安装失败（可能被安全策略限制），程序即将退出。");
+        return 1;
+    }
+    if (!AddTrayIcon()) {
+        // 托盘图标是唯一的交互面：加不上就成了无法控制的常驻进程，必须退出。
+        ShutdownKeyboardHook();
+        ShutdownTyper();
+        NotifyFatal(L"无法创建托盘图标，程序即将退出。");
+        return 1;
+    }
 
     MSG msg = {};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {

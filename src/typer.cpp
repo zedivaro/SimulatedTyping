@@ -20,6 +20,7 @@ HANDLE g_hStartEvent = nullptr;
 HANDLE g_hThread = nullptr;
 std::atomic<bool> g_active{false};
 std::atomic<bool> g_run{false};
+std::atomic<bool> g_abortRequested{false};
 
 bool EscPressed() {
     return (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
@@ -51,15 +52,18 @@ void PressUnicode(const wchar_t* units, int count) {
 }
 
 // 释放用户物理按住的修饰键，避免注入内容被解释成快捷键。
-void ReleaseModifiers() {
-    INPUT in[2]{};
-    in[0].type = INPUT_KEYBOARD;
-    in[0].ki.wVk = VK_CONTROL;
-    in[0].ki.dwFlags = KEYEVENTF_KEYUP;
-    in[1].type = INPUT_KEYBOARD;
-    in[1].ki.wVk = VK_SHIFT;
-    in[1].ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(2, in, sizeof(INPUT));
+// 同时抬起通用键与 L/R 具体键：不同程序读取不同槽位，未按下的键注入 up 无害。
+// 返回 false 表示注入失败（如 UAC 安全桌面激活），调用方应放弃本次模拟。
+bool ReleaseModifiers() {
+    INPUT in[6]{};
+    const WORD keys[6] = {VK_CONTROL, VK_LCONTROL, VK_RCONTROL,
+                          VK_SHIFT, VK_LSHIFT, VK_RSHIFT};
+    for (int k = 0; k < 6; ++k) {
+        in[k].type = INPUT_KEYBOARD;
+        in[k].ki.wVk = keys[k];
+        in[k].ki.dwFlags = KEYEVENTF_KEYUP;
+    }
+    return SendInput(6, in, sizeof(INPUT)) == 6;
 }
 
 void ExecuteAction(const keysim::Action& a) {
@@ -71,12 +75,22 @@ void ExecuteAction(const keysim::Action& a) {
     case keysim::ActionKind::Unicode:
         PressUnicode(a.units, a.unitCount);
         break;
-    case keysim::ActionKind::CtrlBackspace:
-        PressVk(VK_CONTROL, false, false);
-        PressVk(VK_BACK, false, false);
-        PressVk(VK_BACK, true, false);
-        PressVk(VK_CONTROL, true, false);
+    case keysim::ActionKind::CtrlBackspace: {
+        // 单次 SendInput 原子生效：进程若在动作间被终止，不会残留半开的 Ctrl。
+        INPUT in[4]{};
+        in[0].type = INPUT_KEYBOARD;
+        in[0].ki.wVk = VK_CONTROL;
+        in[1].type = INPUT_KEYBOARD;
+        in[1].ki.wVk = VK_BACK;
+        in[2].type = INPUT_KEYBOARD;
+        in[2].ki.wVk = VK_BACK;
+        in[2].ki.dwFlags = KEYEVENTF_KEYUP;
+        in[3].type = INPUT_KEYBOARD;
+        in[3].ki.wVk = VK_CONTROL;
+        in[3].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(4, in, sizeof(INPUT));
         break;
+    }
     }
 }
 
@@ -92,18 +106,31 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
         }
 
         g_active.store(true, std::memory_order_release);
-        ReleaseModifiers();
+        g_abortRequested.store(false, std::memory_order_relaxed);
+        if (!ReleaseModifiers()) {
+            // 无法清除修饰键状态：继续注入会被目标程序解释成快捷键，放弃本次模拟。
+            g_active.store(false, std::memory_order_release);
+            continue;
+        }
         Sleep(15); // 等待修饰键释放状态在目标程序中生效
 
-        const std::vector<keysim::Action> actions = keysim::ExpandText(text);
-        for (const keysim::Action& a : actions) {
-            if (EscPressed()) break;                        // 用户要求中止
-            if (!g_run.load(std::memory_order_relaxed)) break; // 软件正在退出
-            ExecuteAction(a);
-            Sleep(g_speedMs.load(std::memory_order_relaxed));
+        try {
+            const std::vector<keysim::Action> actions = keysim::ExpandText(text);
+            for (const keysim::Action& a : actions) {
+                if (EscPressed() ||
+                    g_abortRequested.exchange(false, std::memory_order_relaxed)) {
+                    break; // 用户要求中止（GetAsyncKeyState 轮询 + 钩子置标志双路径）
+                }
+                if (!g_run.load(std::memory_order_relaxed)) break; // 软件正在退出
+                ExecuteAction(a);
+                Sleep(g_speedMs.load(std::memory_order_relaxed));
+            }
+        } catch (...) {
+            // 内存不足等异常：放弃本次模拟，避免异常穿出线程过程触发
+            // std::terminate 静默杀死整个常驻进程。
         }
 
-        ReleaseModifiers(); // 中止时确保不残留逻辑按下的修饰键
+        ReleaseModifiers(); // 收尾/中止时确保不残留逻辑按下的修饰键（尽力而为）
         g_active.store(false, std::memory_order_release);
     }
     return 0;
@@ -113,6 +140,10 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
 
 bool TypingActive() {
     return g_active.load(std::memory_order_acquire);
+}
+
+void RequestTypingAbort() {
+    g_abortRequested.store(true, std::memory_order_relaxed);
 }
 
 bool StartTypingFromText(std::wstring text) {

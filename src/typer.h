@@ -15,6 +15,10 @@ void ShutdownTyper();
 // 当前是否正在模拟打字。
 bool TypingActive();
 
+// 请求中止当前模拟（由键盘钩子在模拟期间检测到物理 Esc 按下时调用）。
+// 对无进行中模拟的调用无副作用；标志在下次模拟开始时自动复位。
+void RequestTypingAbort();
+
 // 把一段剪贴板文本交给工作线程模拟打字。
 // 返回 false 表示当前已在模拟中，本次请求被忽略。
 bool StartTypingFromText(std::wstring text);
