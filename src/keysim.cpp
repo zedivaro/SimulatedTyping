@@ -62,15 +62,6 @@ ActionGroup NewlineGroup() {
     return group;
 }
 
-ActionGroup TabGroup() {
-    ActionGroup group;
-    group.kind = ActionGroupKind::Tab;
-    for (int k = 0; k < 4; ++k) {
-        group.actions.push_back(TapVk(VK_SPACE));
-    }
-    return group;
-}
-
 } // namespace
 
 std::vector<ActionGroup> ExpandTextGroups(const std::wstring& text) {
@@ -84,8 +75,6 @@ std::vector<ActionGroup> ExpandTextGroups(const std::wstring& text) {
         if (ch == L'\r' || ch == L'\n') {
             // 换行（含孤立的 '\r'，即旧 Mac 行尾）。
             groups.push_back(NewlineGroup());
-        } else if (ch == L'\t') {
-            groups.push_back(TabGroup());
         } else if (IS_HIGH_SURROGATE(ch) && i + 1 < text.size() && IS_LOW_SURROGATE(text[i + 1])) {
             // 代理对是一个码位，作为整体包装进同一套 # 技巧。
             groups.push_back(CharTrickGroup(Unicode2(ch, text[i + 1])));
@@ -120,9 +109,6 @@ std::vector<Action> AbortCleanup(const ActionGroup& group, size_t completed) {
         if (completed == 2) {
             out.push_back(CtrlBackspace());
         }
-        break;
-    case ActionGroupKind::Tab:
-        // 已打出的空格是内容本身，不属于残留。
         break;
     }
     return out;

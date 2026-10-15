@@ -2,8 +2,8 @@
 //
 // 展开规则（用于规避目标编辑器的自动补全）：
 //   换行 '\n'  -> Enter、Space、Ctrl+Backspace
-//   制表 '\t'  -> 连续四个 Space
-//   其他字符   -> '#'、方向左键、该字符、方向右键、Backspace
+//   其他字符（含 '\t' 等一切非换行字符）-> '#'、方向左键、该字符、方向右键、
+//   Backspace，五连包装
 // 其中 "\r\n" 中的 '\r' 被跳过（只算一次换行），孤立的 '\r'（旧 Mac 行尾）
 // 也按一次换行处理；UTF-16 代理对被当作一个字符整体注入。
 #pragma once
@@ -28,9 +28,8 @@ struct Action {
 };
 
 enum class ActionGroupKind {
-    CharTrick,  // 其他字符的五连：#、←、字符、→、Backspace
+    CharTrick,  // 普通字符的五连：#、←、字符、→、Backspace
     Newline,    // 换行：Enter、Space、Ctrl+Backspace
-    Tab,        // 制表符：四个 Space
 };
 
 // 一组动作对应一个剪贴板字符。模拟按组推进；组内动作之间可以中止，

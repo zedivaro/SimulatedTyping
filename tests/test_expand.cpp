@@ -114,12 +114,8 @@ int main() {
         }
     }
 
-    // 7. 制表符：连续四个 Space
-    {
-        auto a = ExpandText(L"\t");
-        CHECK(a.size() == 4);
-        for (const Action& act : a) CHECK(IsVk(act, VK_SPACE));
-    }
+    // 7. 制表符无特殊处理：作为普通字符走 # 技巧，字符本体是 '\t'
+    CheckCharTrick(ExpandText(L"\t"), L'\t');
 
     // 8. 空文本：无动作
     CHECK(ExpandText(L"").empty());
@@ -188,14 +184,17 @@ int main() {
     // 14. 空格自身走五连（Unicode 注入，而非 TapVk VK_SPACE——与 '\t' 一字之差语义不同）
     CheckCharTrick(ExpandText(L" "), L' ');
 
-    // 15. 分组：每组对应一个剪贴板字符（五连/换行三连/制表四连）
+    // 15. 分组：每组对应一个剪贴板字符（五连/换行三连）
     {
         auto groups = ExpandTextGroups(L"a\n\t");
         CHECK(groups.size() == 3);
         if (groups.size() == 3) {
             CHECK(groups[0].kind == ActionGroupKind::CharTrick && groups[0].actions.size() == 5);
             CHECK(groups[1].kind == ActionGroupKind::Newline && groups[1].actions.size() == 3);
-            CHECK(groups[2].kind == ActionGroupKind::Tab && groups[2].actions.size() == 4);
+            CHECK(groups[2].kind == ActionGroupKind::CharTrick && groups[2].actions.size() == 5);
+            CHECK(groups[2].actions[2].kind == ActionKind::Unicode &&
+                  groups[2].actions[2].unitCount == 1 &&
+                  groups[2].actions[2].units[0] == L'\t');
         }
     }
 
@@ -240,16 +239,6 @@ int main() {
             CHECK(c2.size() == 1 && IsCtrlBackspace(c2[0]));
             CHECK(AbortCleanup(g, 1).empty()); // 只有 Enter：无辅助键残留
             CHECK(AbortCleanup(g, 3).empty()); // 组已完成
-        }
-    }
-
-    // 19. 中止清理：制表符的空格是内容本身，任何进度都无需清理
-    {
-        auto groups = ExpandTextGroups(L"\t");
-        CHECK(groups.size() == 1);
-        if (groups.size() == 1) {
-            const ActionGroup& g = groups[0];
-            for (size_t k = 0; k <= 4; ++k) CHECK(AbortCleanup(g, k).empty());
         }
     }
 

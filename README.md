@@ -9,8 +9,7 @@
 | 剪贴板中的字符 | 模拟的按键序列 |
 |----------------|----------------|
 | 换行符（`\r\n`、`\n` 或孤立的 `\r`） | <kbd>Enter</kbd> → <kbd>Space</kbd> → <kbd>Ctrl</kbd>+<kbd>Backspace</kbd> |
-| 制表符（`\t`） | 连续四个 <kbd>Space</kbd> |
-| 其他任意字符（含中文） | <kbd>#</kbd> → <kbd>←</kbd> → 字符 → <kbd>→</kbd> → <kbd>Backspace</kbd> |
+| 其他任意字符（含中文、制表符） | <kbd>#</kbd> → <kbd>←</kbd> → 字符 → <kbd>→</kbd> → <kbd>Backspace</kbd> |
 
 对普通字符：先打一个 `#`，光标左移后再打真正的字符，右移、退格删掉 `#`。
 由于编辑器看到的是 `#` 与字符先后输入且中间有光标移动，自动补全不会弹出，
