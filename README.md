@@ -15,7 +15,8 @@
 |----------------|------------|
 | 开始 | <kbd>X</kbd> → <kbd>←</kbd>（放置占位符） |
 | 换行符（`\r\n`、`\n` 或孤立的 `\r`） | <kbd>Enter</kbd> → <kbd>Space</kbd> → <kbd>Ctrl</kbd>+<kbd>Backspace</kbd> |
-| 其他任意字符（含中文、制表符） | 字符本体（Unicode 注入） |
+| 制表符（`\t`） | <kbd>Tab</kbd> 键 |
+| 其他任意字符（含中文） | 字符本体（Unicode 注入） |
 | 结束 / 中止 | <kbd>Delete</kbd>（删除占位 X） |
 
 中止时若占位 X 尚未放置（只打了 X、还没打 ←），会以 Backspace 撤销它而

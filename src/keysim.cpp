@@ -85,6 +85,10 @@ std::vector<ActionGroup> ExpandTextGroups(const std::wstring& text) {
         if (ch == L'\r' || ch == L'\n') {
             // 换行（含孤立的 '\r'，即旧 Mac 行尾）。
             groups.push_back(NewlineGroup());
+        } else if (ch == L'\t') {
+            // 制表符：Unicode 注入的 \t 在不少编辑器里不触发缩进，
+            // 注入真实的 Tab 键。
+            groups.push_back(CharGroup(TapVk(VK_TAB)));
         } else if (IS_HIGH_SURROGATE(ch) && i + 1 < text.size() && IS_LOW_SURROGATE(text[i + 1])) {
             // 代理对是一个码位，作为整体注入。
             groups.push_back(CharGroup(Unicode2(ch, text[i + 1])));

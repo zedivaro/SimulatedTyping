@@ -61,14 +61,17 @@ int main() {
         }
     }
 
-    // 3. 字符组：中文、制表符、空格都是单动作 Unicode 注入（字符本体）
+    // 3. 字符组：中文、空格是单动作 Unicode 注入；制表符注入真实的 Tab 键
     {
         auto g1 = ExpandTextGroups(L"中");
         CHECK(g1.size() == 2);
         if (g1.size() == 2) CHECK(IsUnicode(g1[1].actions[0], L'中'));
         auto g2 = ExpandTextGroups(L"\t");
         CHECK(g2.size() == 2);
-        if (g2.size() == 2) CHECK(IsUnicode(g2[1].actions[0], L'\t'));
+        if (g2.size() == 2) {
+            CHECK(g2[1].actions.size() == 1);
+            CHECK(IsVk(g2[1].actions[0], VK_TAB) && !g2[1].actions[0].extended);
+        }
         auto g3 = ExpandTextGroups(L" ");
         CHECK(g3.size() == 2);
         if (g3.size() == 2) CHECK(IsUnicode(g3[1].actions[0], L' '));
