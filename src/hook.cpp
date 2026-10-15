@@ -28,6 +28,9 @@ constexpr size_t kMaxSimulatedChars = 1000000;
 
 HWND g_hwndOwner = nullptr;
 HHOOK g_hHook = nullptr;
+// 自有模态 UI（托盘菜单/对话框）打开期间为 true：钩子放行 Ctrl+V，
+// 不启动模拟。仅 UI 线程读写（与钩子回调同线程），无并发访问。
+bool g_ownModalUIOpen = false;
 // 模拟启动成功时置位，直到触发的 V 键松开（期间吞掉一切物理 V 按键）。
 bool g_swallowVKeyDown = false;
 // 物理修饰键状态：只根据非注入事件更新，免疫本软件注入的 keyup 污染。
@@ -37,37 +40,39 @@ bool g_physWinDown = false;
 
 // 读取剪贴板的 CF_UNICODETEXT。取不到文本（无记录、非文本、打不开、超限）返回 false。
 bool ClipboardText(std::wstring& out) {
-    // 异常不得穿出系统回调边界：分配失败时按“无文本”放行常规粘贴。
-    try {
-        if (!OpenClipboard(g_hwndOwner)) return false;
-        bool hasText = false;
-        HANDLE handle = GetClipboardData(CF_UNICODETEXT);
-        if (handle) {
-            // GlobalSize 是分配字节上界。剪贴板数据不保证 NUL 终止：先用上界排除
-            // 明显超限的分配，再在界内扫描终止符确定实际长度，防止越界读。
-            const SIZE_T bytes = GlobalSize(handle);
-            if (bytes >= sizeof(wchar_t) &&
-                bytes <= (kMaxSimulatedChars + 1) * sizeof(wchar_t)) {
-                const wchar_t* data = static_cast<const wchar_t*>(GlobalLock(handle));
-                if (data) {
-                    const SIZE_T maxChars = bytes / sizeof(wchar_t);
-                    SIZE_T length = 0;
-                    while (length < maxChars && data[length] != L'\0') {
-                        ++length;
-                    }
-                    if (length > 0 && length <= kMaxSimulatedChars) {
+    if (!OpenClipboard(g_hwndOwner)) return false;
+    bool hasText = false;
+    HANDLE handle = GetClipboardData(CF_UNICODETEXT);
+    if (handle) {
+        // GlobalSize 是分配字节上界。剪贴板数据不保证 NUL 终止：先用上界排除
+        // 明显超限的分配，再在界内扫描终止符确定实际长度，防止越界读。
+        const SIZE_T bytes = GlobalSize(handle);
+        if (bytes >= sizeof(wchar_t) &&
+            bytes <= (kMaxSimulatedChars + 1) * sizeof(wchar_t)) {
+            const wchar_t* data = static_cast<const wchar_t*>(GlobalLock(handle));
+            if (data) {
+                const SIZE_T maxChars = bytes / sizeof(wchar_t);
+                SIZE_T length = 0;
+                while (length < maxChars && data[length] != L'\0') {
+                    ++length;
+                }
+                if (length > 0 && length <= kMaxSimulatedChars) {
+                    // 唯一可抛点是 assign 的堆分配：单独防护，保证下面的
+                    // GlobalUnlock/CloseClipboard 无条件执行（否则剪贴板
+                    // 停留在被本进程打开的状态，阻塞其他应用访问）。
+                    try {
                         out.assign(data, length);
                         hasText = true;
+                    } catch (...) {
+                        hasText = false;
                     }
-                    GlobalUnlock(handle);
                 }
+                GlobalUnlock(handle);
             }
         }
-        CloseClipboard();
-        return hasText;
-    } catch (...) {
-        return false;
     }
+    CloseClipboard();
+    return hasText;
 }
 
 // 根据物理（非注入）键盘事件更新修饰键状态。
@@ -110,7 +115,10 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                         g_swallowVKeyDown = true;
                         return 1;
                     }
-                    if (g_physCtrlDown && !g_physAltDown && !g_physWinDown) {
+                    // 自有模态 UI 打开期间放行（对话框编辑框里是原生粘贴），
+                    // 避免模拟注入落进自己的菜单/对话框。
+                    if (!g_ownModalUIOpen && g_physCtrlDown && !g_physAltDown &&
+                        !g_physWinDown) {
                         std::wstring text;
                         if (ClipboardText(text) && StartTypingFromText(std::move(text))) {
                             g_swallowVKeyDown = true;
@@ -145,4 +153,8 @@ void ShutdownKeyboardHook() {
         UnhookWindowsHookEx(g_hHook);
         g_hHook = nullptr;
     }
+}
+
+void SetOwnModalUIOpen(bool open) {
+    g_ownModalUIOpen = open;
 }

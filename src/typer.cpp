@@ -197,7 +197,12 @@ void ShutdownTyper() {
     g_run.store(false, std::memory_order_relaxed);
     if (g_hStartEvent) SetEvent(g_hStartEvent);
     if (g_hThread) {
-        WaitForSingleObject(g_hThread, 500);
+        // worker 离开注入循环后 ≤50ms 必退，但大文本的 ExpandText 分配可达
+        // 秒级——给足等待，避免 ExitProcess 恰逢 worker 持堆锁时孤儿化堆
+        // 临界区导致退出挂死。
+        for (int i = 0; i < 4; ++i) {
+            if (WaitForSingleObject(g_hThread, 500) == WAIT_OBJECT_0) break;
+        }
         CloseHandle(g_hThread);
         g_hThread = nullptr;
     }

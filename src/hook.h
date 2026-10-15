@@ -7,3 +7,8 @@ bool InitKeyboardHook(HWND hwndOwner);
 
 // 卸载钩子。
 void ShutdownKeyboardHook();
+
+// 通知钩子：自有模态 UI（托盘菜单/速度对话框）当前打开。
+// 打开期间 Ctrl+V 放行（对话框内是原生粘贴），不启动模拟，
+// 避免注入落进自己的 UI。
+void SetOwnModalUIOpen(bool open);

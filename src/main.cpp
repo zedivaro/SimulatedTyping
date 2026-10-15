@@ -27,8 +27,10 @@ UINT g_msgTaskbarCreated = 0;
 HANDLE g_singleInstanceMutex = nullptr;
 
 // 致命初始化失败：托盘尚未建立，只能用消息框告知后退出。
+// TOPMOST 防止被模态对话框遮挡导致用户看不到退出原因。
 void NotifyFatal(const wchar_t* message) {
-    MessageBoxW(nullptr, message, kWindowTitle, MB_OK | MB_ICONERROR);
+    MessageBoxW(nullptr, message, kWindowTitle,
+                MB_OK | MB_ICONERROR | MB_TOPMOST);
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +165,7 @@ void ShowTrayMenu() {
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
     g_trayMenuOpen = true;
+    SetOwnModalUIOpen(true); // 期间 Ctrl+V 原生粘贴，不启动模拟
     AppendMenuW(menu, MF_STRING, IDM_SPEED, L"修改打字速度");
     AppendMenuW(menu, MF_STRING, IDM_EXIT, L"退出 Simulated Typing");
 
@@ -182,6 +185,7 @@ void ShowTrayMenu() {
         DestroyWindow(g_hwnd);
     }
     g_trayMenuOpen = false; // 覆盖整个菜单+对话框期间（清零必须晚于模态对话框）
+    SetOwnModalUIOpen(false);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,9 +237,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     }
 
     unsigned speed = 10; // 默认 10 毫秒/键
-    if (LoadSpeedFromRegistry(speed)) {
-        g_speedMs.store(speed, std::memory_order_relaxed);
+    if (LoadSpeedFromRegistry(speed) && speed > kMaxSpeedMs) {
+        // 注册表被外部改成异常大值时夹紧到上限（与对话框一致）。
+        speed = kMaxSpeedMs;
     }
+    g_speedMs.store(speed, std::memory_order_relaxed);
 
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
