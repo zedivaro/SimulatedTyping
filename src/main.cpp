@@ -105,6 +105,10 @@ INT_PTR CALLBACK SpeedDialogProc(HWND dialog, UINT msg, WPARAM wParam, LPARAM lP
 // ---------------------------------------------------------------------------
 
 void AddTrayIcon() {
+    if (g_nid.hIcon) {
+        DestroyIcon(g_nid.hIcon); // TaskbarCreated 重加图标前先释放旧句柄
+        g_nid.hIcon = nullptr;
+    }
     ZeroMemory(&g_nid, sizeof(g_nid));
     g_nid.cbSize = sizeof(g_nid);
     g_nid.hWnd = g_hwnd;
@@ -183,7 +187,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
 
     // 单实例保护：同时运行两份会导致按键被模拟两遍。
     g_singleInstanceMutex = CreateMutexW(nullptr, TRUE, kMutexName);
-    if (g_singleInstanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+    if (!g_singleInstanceMutex) return 1;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
         MessageBoxW(nullptr, L"Simulated Typing 已在运行。", kWindowTitle,
                     MB_OK | MB_ICONINFORMATION);
         return 0;
@@ -228,6 +233,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     RemoveTrayIcon();
     ShutdownKeyboardHook();
     ShutdownTyper();
+    if (g_nid.hIcon) {
+        DestroyIcon(g_nid.hIcon);
+        g_nid.hIcon = nullptr;
+    }
     if (g_singleInstanceMutex) {
         ReleaseMutex(g_singleInstanceMutex);
         CloseHandle(g_singleInstanceMutex);

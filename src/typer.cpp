@@ -97,7 +97,8 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
 
         const std::vector<keysim::Action> actions = keysim::ExpandText(text);
         for (const keysim::Action& a : actions) {
-            if (EscPressed()) break; // 用户要求中止
+            if (EscPressed()) break;                        // 用户要求中止
+            if (!g_run.load(std::memory_order_relaxed)) break; // 软件正在退出
             ExecuteAction(a);
             Sleep(g_speedMs.load(std::memory_order_relaxed));
         }

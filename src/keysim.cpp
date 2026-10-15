@@ -56,11 +56,12 @@ std::vector<Action> ExpandText(const std::wstring& text) {
     std::vector<Action> out;
     for (size_t i = 0; i < text.size(); ++i) {
         const wchar_t ch = text[i];
-        if (ch == L'\r') {
-            // 剪贴板中的 "\r\n" 只按一次换行处理。
+        if (ch == L'\r' && i + 1 < text.size() && text[i + 1] == L'\n') {
+            // "\r\n" 只按一次换行处理（换行由后面的 '\n' 触发）。
             continue;
         }
-        if (ch == L'\n') {
+        if (ch == L'\r' || ch == L'\n') {
+            // 换行（含孤立的 '\r'，即旧 Mac 行尾）。
             out.push_back(TapVk(VK_RETURN));
             out.push_back(TapVk(VK_SPACE));
             out.push_back(CtrlBackspace());

@@ -71,8 +71,27 @@ int main() {
         if (a.size() == 3) CHECK(IsVk(a[0], VK_RETURN));
     }
 
-    // 6. 单独的 '\r' 不产生任何动作
-    CHECK(ExpandText(L"\r").empty());
+    // 6. 单独的 '\r'（旧 Mac 行尾）也按换行处理
+    {
+        auto a = ExpandText(L"\r");
+        CHECK(a.size() == 3);
+        if (a.size() == 3) {
+            CHECK(IsVk(a[0], VK_RETURN));
+            CHECK(IsVk(a[1], VK_SPACE));
+            CHECK(IsCtrlBackspace(a[2]));
+        }
+    }
+
+    // 6b. "a\rb"：孤立的 '\r' 按换行展开，不吞内容
+    {
+        auto a = ExpandText(L"a\rb");
+        CHECK(a.size() == 5 + 3 + 5);
+        if (a.size() == 5 + 3 + 5) {
+            CHECK(IsUnicode(a[2], L'a'));
+            CHECK(IsVk(a[5], VK_RETURN));
+            CHECK(IsUnicode(a[10], L'b'));
+        }
+    }
 
     // 7. 制表符：连续四个 Space
     {
@@ -130,6 +149,16 @@ int main() {
             CHECK(a[1].kind == ActionKind::TapVk && a[1].vk == VK_LEFT && a[1].extended);
             CHECK(a[3].kind == ActionKind::TapVk && a[3].vk == VK_RIGHT && a[3].extended);
             CHECK(a[4].kind == ActionKind::TapVk && a[4].vk == VK_BACK && !a[4].extended);
+        }
+    }
+
+    // 13. 孤立低位代理按单个码元处理（覆盖 else 分支）
+    {
+        auto a = ExpandText(std::wstring(1, L'\xDF62'));
+        CHECK(a.size() == 5);
+        if (a.size() == 5) {
+            CHECK(a[2].kind == ActionKind::Unicode && a[2].unitCount == 1);
+            if (a[2].unitCount == 1) CHECK(a[2].units[0] == 0xDF62);
         }
     }
 
