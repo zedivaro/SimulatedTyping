@@ -27,7 +27,28 @@ struct Action {
     int unitCount = 0;     // 1 或 2
 };
 
-// 将一段文本展开为按键动作序列。纯函数，无副作用。
+enum class ActionGroupKind {
+    CharTrick,  // 其他字符的五连：#、←、字符、→、Backspace
+    Newline,    // 换行：Enter、Space、Ctrl+Backspace
+    Tab,        // 制表符：四个 Space
+};
+
+// 一组动作对应一个剪贴板字符。模拟按组推进；组内动作之间可以中止，
+// 中止后由 AbortCleanup 给出清除残留辅助键所需的补注动作。
+struct ActionGroup {
+    ActionGroupKind kind = ActionGroupKind::CharTrick;
+    std::vector<Action> actions;
+};
+
+// 将一段文本展开为按键动作组（每组对应一个剪贴板字符）。纯函数，无副作用。
+std::vector<ActionGroup> ExpandTextGroups(const std::wstring& text);
+
+// 中止清理：某组动作执行到第 completed 个完成后被中止时，为清除残留的
+// 辅助键（未删掉的 #、换行后未删的 Space）还应立即注入的动作。
+// 已打出的内容字符不属于残留，不会被清理。纯函数，无副作用。
+std::vector<Action> AbortCleanup(const ActionGroup& group, size_t completed);
+
+// 便捷封装：展开为扁平动作序列。
 std::vector<Action> ExpandText(const std::wstring& text);
 
 }

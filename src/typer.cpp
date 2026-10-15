@@ -2,8 +2,10 @@
 //
 // 工作线程等待启动事件；被唤醒后取出文本快照，先合成释放用户物理按住的
 // Ctrl/Shift（否则注入的字符会被目标程序解释成 Ctrl+C 之类的快捷键），
-// 再按 keysim 展开的动作序列逐键注入，每键之间停顿设定的毫秒数。
-// 模拟期间每键注入前检查 Esc，一旦按下立即中止剩余内容。
+// 再按 keysim 展开的动作组逐键注入，每键之间停顿设定的毫秒数。
+// 模拟期间每键注入前检查中止请求（Esc / 退出 / 模拟中按 Win），一旦触发
+// 立即停止剩余内容，并补注当前字符组的中止清理动作（删掉可能残留的 #
+// 或换行后的 Space），然后收尾。
 #include <windows.h>
 #include <mutex>
 #include <utility>
@@ -133,12 +135,34 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
         Sleep(15); // 等待修饰键释放状态在目标程序中生效
 
         try {
-            const std::vector<keysim::Action> actions = keysim::ExpandText(text);
-            for (const keysim::Action& a : actions) {
-                if (StopRequested()) break;                        // 用户要求中止
-                if (!g_run.load(std::memory_order_relaxed)) break; // 软件正在退出
-                ExecuteAction(a);
-                if (!InterruptibleSleep(g_speedMs.load(std::memory_order_relaxed))) {
+            const std::vector<keysim::ActionGroup> groups = keysim::ExpandTextGroups(text);
+            bool aborted = false;
+            for (const keysim::ActionGroup& group : groups) {
+                size_t completed = 0;
+                for (const keysim::Action& a : group.actions) {
+                    if (StopRequested()) {
+                        aborted = true; // 用户要求中止
+                        break;
+                    }
+                    if (!g_run.load(std::memory_order_relaxed)) {
+                        aborted = true; // 软件正在退出
+                        break;
+                    }
+                    ExecuteAction(a);
+                    ++completed;
+                    if (!InterruptibleSleep(g_speedMs.load(std::memory_order_relaxed))) {
+                        aborted = true;
+                        break;
+                    }
+                }
+                if (aborted) {
+                    // 中止清理：立即（不按速度停顿）补注清除残留辅助键的动作，
+                    // 避免未删掉的 # / 换行后的 Space 留在文档里。清理只有
+                    // 一两个键，期间不再响应中止，保证清理完整。
+                    for (const keysim::Action& a :
+                         keysim::AbortCleanup(group, completed)) {
+                        ExecuteAction(a);
+                    }
                     break;
                 }
             }

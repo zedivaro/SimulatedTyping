@@ -188,6 +188,71 @@ int main() {
     // 14. 空格自身走五连（Unicode 注入，而非 TapVk VK_SPACE——与 '\t' 一字之差语义不同）
     CheckCharTrick(ExpandText(L" "), L' ');
 
+    // 15. 分组：每组对应一个剪贴板字符（五连/换行三连/制表四连）
+    {
+        auto groups = ExpandTextGroups(L"a\n\t");
+        CHECK(groups.size() == 3);
+        if (groups.size() == 3) {
+            CHECK(groups[0].kind == ActionGroupKind::CharTrick && groups[0].actions.size() == 5);
+            CHECK(groups[1].kind == ActionGroupKind::Newline && groups[1].actions.size() == 3);
+            CHECK(groups[2].kind == ActionGroupKind::Tab && groups[2].actions.size() == 4);
+        }
+    }
+
+    // 16. 代理对为一组，码元整体在第三位
+    {
+        const wchar_t pair[2] = {0xD852, 0xDF62}; // U+24B62
+        auto groups = ExpandTextGroups(std::wstring(pair, 2));
+        CHECK(groups.size() == 1);
+        if (groups.size() == 1) {
+            CHECK(groups[0].kind == ActionGroupKind::CharTrick && groups[0].actions.size() == 5);
+            CHECK(groups[0].actions[2].kind == ActionKind::Unicode &&
+                  groups[0].actions[2].unitCount == 2);
+        }
+    }
+
+    // 17. 中止清理：五连各进度的残留 # 清除动作
+    {
+        auto groups = ExpandTextGroups(L"x");
+        CHECK(groups.size() == 1);
+        if (groups.size() == 1) {
+            const ActionGroup& g = groups[0];
+            auto c1 = AbortCleanup(g, 1); // 打完 #：光标在 # 后，直接 Backspace
+            CHECK(c1.size() == 1 && IsVk(c1[0], VK_BACK));
+            auto c2 = AbortCleanup(g, 2); // 打完 ←：光标在 # 前，先 → 再 Backspace
+            CHECK(c2.size() == 2 && IsVk(c2[0], VK_RIGHT) && IsVk(c2[1], VK_BACK));
+            auto c3 = AbortCleanup(g, 3); // 字符已打出：光标在 # 前，先 → 再 Backspace
+            CHECK(c3.size() == 2 && IsVk(c3[0], VK_RIGHT) && IsVk(c3[1], VK_BACK));
+            auto c4 = AbortCleanup(g, 4); // 只差最后的 Backspace
+            CHECK(c4.size() == 1 && IsVk(c4[0], VK_BACK));
+            CHECK(AbortCleanup(g, 0).empty()); // 组未开始
+            CHECK(AbortCleanup(g, 5).empty()); // 组已完成
+        }
+    }
+
+    // 18. 中止清理：换行组在 Space 之后、Ctrl+Backspace 之前中止，补删 Space
+    {
+        auto groups = ExpandTextGroups(L"\n");
+        CHECK(groups.size() == 1);
+        if (groups.size() == 1) {
+            const ActionGroup& g = groups[0];
+            auto c2 = AbortCleanup(g, 2);
+            CHECK(c2.size() == 1 && IsCtrlBackspace(c2[0]));
+            CHECK(AbortCleanup(g, 1).empty()); // 只有 Enter：无辅助键残留
+            CHECK(AbortCleanup(g, 3).empty()); // 组已完成
+        }
+    }
+
+    // 19. 中止清理：制表符的空格是内容本身，任何进度都无需清理
+    {
+        auto groups = ExpandTextGroups(L"\t");
+        CHECK(groups.size() == 1);
+        if (groups.size() == 1) {
+            const ActionGroup& g = groups[0];
+            for (size_t k = 0; k <= 4; ++k) CHECK(AbortCleanup(g, k).empty());
+        }
+    }
+
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures == 0) std::printf("ALL TESTS PASSED\n");
     return g_failures == 0 ? 0 : 1;
