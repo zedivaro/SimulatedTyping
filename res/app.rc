@@ -1,0 +1,19 @@
+// app.rc —— Simulated Typing 资源脚本（UTF-8）。
+#pragma code_page(65001)
+#include <windows.h>
+#include "resource.h"
+
+IDI_APP ICON "..\\logo.ico"
+
+1 24 "app.manifest"
+
+IDD_SPEED DIALOGEX 0, 0, 196, 64
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "修改打字速度"
+FONT 9, "Microsoft YaHei UI"
+BEGIN
+    LTEXT           "打字速度（毫秒/键）：", IDC_STATIC, 8, 9, 100, 10
+    EDITTEXT        IDC_SPEED_EDIT, 112, 7, 60, 13, ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "确定", IDOK, 52, 42, 56, 15
+    PUSHBUTTON      "取消", IDCANCEL, 116, 42, 56, 15
+END

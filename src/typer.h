@@ -1,0 +1,20 @@
+// typer.h —— 模拟打字工作线程。
+#pragma once
+#include <atomic>
+#include <string>
+
+// 打字速度（毫秒/键）。由 UI 线程写入、模拟线程读取，默认 10。
+extern std::atomic<unsigned> g_speedMs;
+
+// 创建启动事件与工作线程。成功返回 true。
+bool InitTyper();
+
+// 通知工作线程退出并短暂等待。
+void ShutdownTyper();
+
+// 当前是否正在模拟打字。
+bool TypingActive();
+
+// 把一段剪贴板文本交给工作线程模拟打字。
+// 返回 false 表示当前已在模拟中，本次请求被忽略。
+bool StartTypingFromText(std::wstring text);
