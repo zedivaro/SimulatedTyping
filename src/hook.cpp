@@ -38,7 +38,8 @@ bool g_ownModalUIOpen = false;
 // 模拟打字功能总开关（托盘菜单「启用」）。UI 线程写、钩子回调读，
 // 启动默认开启。
 std::atomic<bool> g_enabled{true};
-// 模拟启动成功时置位，直到触发的 V 键松开（期间吞掉一切物理 V 按键）。
+// 模拟启动成功时置位，直到触发的 V 键松开——无论松开发生在模拟期间（兜底
+// 屏蔽分支中清除）还是模拟结束之后。残留未清会导致下一次按 V 被误吞。
 bool g_swallowVKeyDown = false;
 // 物理修饰键状态：只根据非注入事件更新，免疫本软件注入的 keyup 污染。
 bool g_physCtrlDown = false;
@@ -113,6 +114,9 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 // 模拟中：屏蔽一切物理键盘事件，包括 Esc。Esc 由本软件消费
                 // 用于中止模拟，不传达给目标程序。
                 if (info.vkCode == VK_ESCAPE && down) RequestTypingAbort();
+                // 模拟中松开触发键：必须清除吞键标志，否则模拟结束后标志
+                // 残留，下一次按键（含字母 v、新的 Ctrl+V）会被误吞一次。
+                if (info.vkCode == 'V' && !down) g_swallowVKeyDown = false;
                 return 1;
             } else if (info.vkCode == 'V') {
                 if (down) {
