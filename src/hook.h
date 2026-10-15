@@ -6,8 +6,8 @@
 // 消息循环）。任一安装失败即回滚并返回 false。
 bool InitInputHooks(HWND hwndOwner);
 
-// 卸载全部钩子。
-void ShutdownKeyboardHook();
+// 卸载键盘与鼠标钩子（与 InitInputHooks 配对）。
+void ShutdownInputHooks();
 
 // 通知钩子：自有模态 UI（托盘菜单/速度对话框）当前打开。
 // 打开期间 Ctrl+V 放行（对话框内是原生粘贴），不启动模拟，

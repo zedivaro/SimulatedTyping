@@ -2,8 +2,8 @@
 //
 // 行为规则：
 //   * 按下 V 键且物理 Ctrl 按住、Alt 与 Win 未按住时（即 Ctrl+V 或 Ctrl+Shift+V）：
-//       - 剪贴板最近一条记录是文本且不超过上限 -> 吞掉本次按键，交给模拟线程逐字打出；
-//       - 剪贴板没有记录、不是文本或超限 -> 原样放行，目标程序保持常规粘贴行为。
+//       - 当前剪贴板内容是文本且不超过上限 -> 吞掉本次按键，交给模拟线程逐字打出；
+//       - 剪贴板没有文本或超限 -> 原样放行，目标程序保持常规粘贴行为。
 //   * 模拟进行期间屏蔽一切物理键盘与鼠标事件（含鼠标移动、点击、滚轮），
 //     防止杂散输入混进目标文档。Esc 也被吞掉，仅由本软件消费用于中止模拟，
 //     不传达给目标程序。
@@ -46,7 +46,7 @@ bool g_physCtrlDown = false;
 bool g_physAltDown = false;
 bool g_physWinDown = false;
 
-// 读取剪贴板的 CF_UNICODETEXT。取不到文本（无记录、非文本、打不开、超限）返回 false。
+// 读取剪贴板的 CF_UNICODETEXT。取不到文本（无文本、打不开、超限）返回 false。
 bool ClipboardText(std::wstring& out) {
     if (!OpenClipboard(g_hwndOwner)) return false;
     bool hasText = false;
@@ -173,7 +173,7 @@ bool InitInputHooks(HWND hwndOwner) {
     return true;
 }
 
-void ShutdownKeyboardHook() {
+void ShutdownInputHooks() {
     if (g_hMouseHook) {
         UnhookWindowsHookEx(g_hMouseHook);
         g_hMouseHook = nullptr;

@@ -1,6 +1,7 @@
 // main.cpp —— Simulated Typing 入口：隐藏窗口、托盘图标、菜单与设置。
 //
 // 软件常驻系统托盘。左键单击托盘图标弹出菜单：
+//   * 启用 —— 可勾选的模拟打字总开关（不持久化，每次启动默认勾选）；
 //   * 修改打字速度 —— 对话框输入非负整数（毫秒/键），默认 10，持久化到注册表；
 //   * 退出 Simulated Typing。
 #include <windows.h>
@@ -289,7 +290,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     }
     if (!AddTrayIcon()) {
         // 托盘图标是唯一的交互面：加不上就成了无法控制的常驻进程，必须退出。
-        ShutdownKeyboardHook();
+        ShutdownInputHooks();
         ShutdownTyper();
         if (g_nid.hIcon) {
             DestroyIcon(g_nid.hIcon); // LoadImageW 已加载的句柄随失败路径释放
@@ -306,7 +307,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     }
 
     ShutdownTyper();          // 先停模拟线程（阻塞等待期间 LL 回调本就不可达，
-    ShutdownKeyboardHook();   // 不存在“吞 V 保护”窗口），再卸载键盘/鼠标钩子
+    ShutdownInputHooks();   // 不存在“吞 V 保护”窗口），再卸载键盘/鼠标钩子
     if (g_nid.hIcon) {
         DestroyIcon(g_nid.hIcon);
         g_nid.hIcon = nullptr;

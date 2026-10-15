@@ -4,9 +4,10 @@
 // Ctrl/Shift（否则注入的字符会被目标程序解释成 Ctrl+C 之类的快捷键），
 // 再按 keysim 展开的动作组逐键注入：先打占位字符 X 并把光标移到其左侧，
 // 内容字符依次插入在 X 之前，每键之间停顿设定的毫秒数。
-// 模拟期间每键注入前检查中止请求（Esc / 退出），一旦触发立即停止剩余
-// 内容，补注当前组的中止清理动作（撤销未就位的占位 X / 补删换行后的
-// Space），最后注入 Delete 删除占位 X（Leader 未完成时无需 Delete）。
+// 每键注入前检查停止请求（Esc / 退出 / 注入失败——失败意味着“占位 X 恒
+// 在光标右侧”的不变量已不可信），一旦触发立即停止剩余内容，补注当前组的
+// 中止清理动作（撤销未就位的占位 X / 补删换行后的 Space），最后注入
+// Delete 删除占位 X（Leader 未完成时无需 Delete）。
 #include <windows.h>
 #include <mutex>
 #include <utility>
@@ -112,7 +113,9 @@ bool ExecuteAction(const keysim::Action& a) {
         return SendInput(4, in, sizeof(INPUT)) == 4;
     }
     }
-    return true;
+    // 兜底：未来新增 ActionKind 而未同步此处时，按注入失败处理（中止模拟），
+    // 而不是静默把未注入的动作计为已完成。
+    return false;
 }
 
 DWORD WINAPI TyperThreadProc(LPVOID) {
@@ -179,16 +182,17 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
             }
             if (leaderDone) {
                 // 模拟结束或中止：删除光标右侧的占位字符 X。
-                ExecuteAction(keysim::PlaceholderDeleteAction());
-                deleteSent = true;
+                deleteSent = ExecuteAction(keysim::PlaceholderDeleteAction());
             }
         } catch (...) {
             // 内存不足等异常：放弃本次模拟，避免异常穿出线程过程触发
             // std::terminate 静默杀死整个常驻进程。
         }
         if (leaderDone && !deleteSent) {
-            // 异常路径收尾：异常可能发生在展开或清理阶段，此时占位 X 仍在
+            // 异常路径收尾：若异常发生在内容注入或清理阶段，占位 X 仍在
             // 光标右侧，尽力补发结尾 Delete（ExecuteAction 不抛异常）。
+            // 展开阶段抛异常时占位 X 尚未注入，安全性由 leaderDone==false
+            // 守卫保证（此时不会走到这里）。
             ExecuteAction(keysim::PlaceholderDeleteAction());
         }
 
