@@ -1,19 +1,20 @@
-// hook.cpp —— 低级键盘钩子。
+// hook.cpp —— 低级键盘与鼠标钩子。
 //
 // 行为规则：
 //   * 按下 V 键且物理 Ctrl 按住、Alt 与 Win 未按住时（即 Ctrl+V 或 Ctrl+Shift+V）：
 //       - 剪贴板最近一条记录是文本且不超过上限 -> 吞掉本次按键，交给模拟线程逐字打出；
 //       - 剪贴板没有记录、不是文本或超限 -> 原样放行，目标程序保持常规粘贴行为。
-//   * 模拟进行期间吞掉一切物理 V 按键（无论是否带修饰键）：既忽略重复触发，
-//     也避免字面 'v' 混进目标文档——模拟开始会注入 Ctrl/Shift 抬起，用户按住
-//     不放的自动重复因此不再携带 Ctrl 状态。窗口覆盖整个模拟过程，直到触发
-//     的 V 键松开。
-//   * 模拟进行期间按下 Esc -> 请求中止模拟（Esc 本身照常放行给目标程序）。
+//   * 模拟进行期间屏蔽除 Esc 外的一切物理键盘与鼠标事件（含鼠标移动、点击、
+//     滚轮），防止杂散输入混进目标文档；Esc 照常放行并请求中止模拟。
+//   * 模拟结束后触发键仍按住时，吞掉其自动重复直到松开：模拟开始会注入
+//     Ctrl/Shift 抬起，自动重复不再携带 Ctrl 状态，放行会把字面 'v' 漏进
+//     目标文档。
 //   * 修饰键判定使用本钩子自跟踪的“物理”状态（只统计非注入事件）：本软件会
 //     注入 Ctrl/Shift 抬起，GetAsyncKeyState 会被注入事件污染——模拟结束后
 //     用户仍按住的 Ctrl 在异步键态里是“抬起”，依赖它会漏判。若钩子因系统
 //     超时恰好错过某个修饰键事件，物理状态可能失真，重按该键即可恢复。
-//   * 本软件自己注入的按键带 LLKHF_INJECTED 标记，直接放行，避免死循环。
+//   * 本软件自己注入的按键带 LLKHF_INJECTED / LLMHF_INJECTED 标记，直接放行，
+//     避免死循环。
 #include <windows.h>
 #include <atomic>
 #include <string>
@@ -28,7 +29,8 @@ namespace {
 constexpr size_t kMaxSimulatedChars = 1000000;
 
 HWND g_hwndOwner = nullptr;
-HHOOK g_hHook = nullptr;
+HHOOK g_hKeyboardHook = nullptr;
+HHOOK g_hMouseHook = nullptr;
 // 自有模态 UI（托盘菜单/对话框）打开期间为 true：钩子放行 Ctrl+V，
 // 不启动模拟。仅 UI 线程读写（与钩子回调同线程），无并发访问。
 bool g_ownModalUIOpen = false;
@@ -94,11 +96,6 @@ void TrackPhysicalModifiers(const KBDLLHOOKSTRUCT& info, WPARAM wParam) {
     case VK_LWIN:
     case VK_RWIN:
         g_physWinDown = down;
-        if (down && TypingActive()) {
-            // 模拟中按下 Win：随后注入的 ←/→ 会被系统当作 Win+←/→ 级联触发
-            // 窗口贴靠，立即中止剩余模拟。
-            RequestTypingAbort();
-        }
         break;
     default:
         break;
@@ -111,13 +108,18 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         if (!(info.flags & LLKHF_INJECTED)) {
             TrackPhysicalModifiers(info, wParam);
             const bool down = wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN;
-            if (info.vkCode == 'V') {
+            if (TypingActive()) {
+                // 模拟中：屏蔽除 Esc 外的一切物理键盘事件；Esc 放行并请求中止
+                // （Esc 本身照常传达给目标程序）。
+                if (info.vkCode == VK_ESCAPE) {
+                    if (down) RequestTypingAbort();
+                } else {
+                    return 1;
+                }
+            } else if (info.vkCode == 'V') {
                 if (down) {
-                    if (TypingActive() || g_swallowVKeyDown) {
-                        // 模拟中：吞掉一切物理 V（含自动重复与无修饰的 'v'）。
-                        // 置位标志让匹配的 keyup 也被吞掉，不留孤儿 keyup。
-                        g_swallowVKeyDown = true;
-                        return 1;
+                    if (g_swallowVKeyDown) {
+                        return 1; // 触发键仍按住：吞掉自动重复
                     }
                     // 自有模态 UI 打开期间放行（对话框编辑框里是原生粘贴），
                     // 避免模拟注入落进自己的菜单/对话框。
@@ -135,10 +137,18 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                     g_swallowVKeyDown = false;
                     return 1;
                 }
-            } else if (info.vkCode == VK_ESCAPE && down && TypingActive()) {
-                // 请求中止本次模拟；Esc 本身照常放行（不吞）。
-                RequestTypingAbort();
             }
+        }
+    }
+    return CallNextHookEx(nullptr, nCode, wParam, lParam);
+}
+
+LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION) {
+        const MSLLHOOKSTRUCT& info = *reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
+        if (!(info.flags & LLMHF_INJECTED) && TypingActive()) {
+            // 模拟中：屏蔽一切物理鼠标事件（移动、按键、滚轮）。
+            return 1;
         }
     }
     return CallNextHookEx(nullptr, nCode, wParam, lParam);
@@ -148,15 +158,27 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 
 bool InitKeyboardHook(HWND hwndOwner) {
     g_hwndOwner = hwndOwner;
-    g_hHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc,
-                                GetModuleHandleW(nullptr), 0);
-    return g_hHook != nullptr;
+    g_hKeyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc,
+                                        GetModuleHandleW(nullptr), 0);
+    if (!g_hKeyboardHook) return false;
+    g_hMouseHook = SetWindowsHookExW(WH_MOUSE_LL, LowLevelMouseProc,
+                                     GetModuleHandleW(nullptr), 0);
+    if (!g_hMouseHook) {
+        UnhookWindowsHookEx(g_hKeyboardHook);
+        g_hKeyboardHook = nullptr;
+        return false;
+    }
+    return true;
 }
 
 void ShutdownKeyboardHook() {
-    if (g_hHook) {
-        UnhookWindowsHookEx(g_hHook);
-        g_hHook = nullptr;
+    if (g_hMouseHook) {
+        UnhookWindowsHookEx(g_hMouseHook);
+        g_hMouseHook = nullptr;
+    }
+    if (g_hKeyboardHook) {
+        UnhookWindowsHookEx(g_hKeyboardHook);
+        g_hKeyboardHook = nullptr;
     }
 }
 
