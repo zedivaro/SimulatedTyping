@@ -31,7 +31,9 @@ if not exist build\test mkdir build\test
 rem --- unit tests for the key-expansion logic (run first, fail fast) ---
 rem NOTE: gates use "if not errorlevel==0" because "if errorlevel 1" is a
 rem signed >=1 comparison and would miss crash-style negative exit codes.
-cl /nologo /W4 /WX /utf-8 /EHsc /DUNICODE /D_UNICODE /Isrc /c tests\test_expand.cpp src\keysim.cpp /Fobuild\test\
+rem /MT statically links the CRT so the built exe has no VC runtime DLL
+rem dependency (explicit, do not rely on toolchain defaults).
+cl /nologo /W4 /WX /utf-8 /O2 /MT /EHsc /DUNICODE /D_UNICODE /Isrc /c tests\test_expand.cpp src\keysim.cpp /Fobuild\test\
 if not "%errorlevel%"=="0" exit /b 1
 link /nologo /OUT:build\test\test_expand.exe build\test\test_expand.obj build\test\keysim.obj
 if not "%errorlevel%"=="0" exit /b 1
@@ -42,14 +44,16 @@ if not "%errorlevel%"=="0" (
 )
 
 rem --- resources ---
-rem res\app.rc references "..\logo.ico", "app.manifest" and "resource.h";
-rem those resolve through the /i search paths below (rc runs with this dir
-rem as CWD). Keep them in sync if you move files.
+rem res\app.rc references "..\logo.ico", "app.manifest" and "resource.h":
+rem data files (ico/manifest) resolve relative to the .rc file's own
+rem directory; "resource.h" resolves through the /i src search path.
 rc /nologo /fo build\app.res /i res /i src res\app.rc
 if not "%errorlevel%"=="0" exit /b 1
 
 rem --- application ---
-cl /nologo /W4 /WX /utf-8 /O2 /EHsc /DUNICODE /D_UNICODE /Isrc /c src\main.cpp src\hook.cpp src\typer.cpp src\keysim.cpp /Fobuild\
+rem Remove stale .obj files so a failed partial compile cannot link old objects.
+del /q build\*.obj 2>nul
+cl /nologo /W4 /WX /utf-8 /O2 /MT /EHsc /DUNICODE /D_UNICODE /Isrc /c src\main.cpp src\hook.cpp src\typer.cpp src\keysim.cpp /Fobuild\
 if not "%errorlevel%"=="0" exit /b 1
 
 link /nologo /SUBSYSTEM:WINDOWS /MANIFEST:NO /OUT:SimulatedTyping.exe build\main.obj build\hook.obj build\typer.obj build\keysim.obj build\app.res user32.lib shell32.lib advapi32.lib

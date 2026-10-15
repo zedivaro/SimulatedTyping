@@ -26,13 +26,26 @@ bool EscPressed() {
     return (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
 }
 
-void PressVk(WORD vk, bool up, bool extended) {
-    INPUT in{};
-    in.type = INPUT_KEYBOARD;
-    in.ki.wVk = vk;
-    in.ki.dwFlags = extended ? KEYEVENTF_EXTENDEDKEY : 0;
-    if (up) in.ki.dwFlags |= KEYEVENTF_KEYUP;
-    SendInput(1, &in, sizeof(INPUT));
+// 是否请求停止（Esc 物理按下，或钩子在模拟期间置位的中止标志）。
+// 消费中止标志：返回 true 后由调用方执行清理。
+bool StopRequested() {
+    if (EscPressed()) return true;
+    return g_abortRequested.exchange(false, std::memory_order_relaxed);
+}
+
+// 可中断睡眠：把长睡切成小片，保证 Esc/退出请求的响应延迟有界
+// （否则极大速度下单次 Sleep 可达数小时甚至被 Sleep 视作 INFINITE）。
+// 返回 false 表示睡眠期间收到中止/退出请求。
+bool InterruptibleSleep(unsigned ms) {
+    while (ms > 0) {
+        const unsigned slice = ms < 50 ? ms : 50;
+        Sleep(slice);
+        ms -= slice;
+        if (StopRequested() || !g_run.load(std::memory_order_relaxed)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // 注入 1~2 个 UTF-16 码元（先全部按下，再全部抬起）。
@@ -53,7 +66,7 @@ void PressUnicode(const wchar_t* units, int count) {
 
 // 释放用户物理按住的修饰键，避免注入内容被解释成快捷键。
 // 同时抬起通用键与 L/R 具体键：不同程序读取不同槽位，未按下的键注入 up 无害。
-// 返回 false 表示注入失败（如 UAC 安全桌面激活），调用方应放弃本次模拟。
+// 返回 false 表示注入被系统阻断（UIPI 提权窗口、安全桌面等），调用方应放弃本次模拟。
 bool ReleaseModifiers() {
     INPUT in[6]{};
     const WORD keys[6] = {VK_CONTROL, VK_LCONTROL, VK_RCONTROL,
@@ -68,10 +81,17 @@ bool ReleaseModifiers() {
 
 void ExecuteAction(const keysim::Action& a) {
     switch (a.kind) {
-    case keysim::ActionKind::TapVk:
-        PressVk(a.vk, false, a.extended);
-        PressVk(a.vk, true, a.extended);
+    case keysim::ActionKind::TapVk: {
+        // 单次 SendInput 原子生效：进程若在动作间被终止，不会残留按下态的键。
+        INPUT in[2]{};
+        in[0].type = INPUT_KEYBOARD;
+        in[0].ki.wVk = a.vk;
+        in[0].ki.dwFlags = a.extended ? KEYEVENTF_EXTENDEDKEY : 0;
+        in[1] = in[0];
+        in[1].ki.dwFlags |= KEYEVENTF_KEYUP;
+        SendInput(2, in, sizeof(INPUT));
         break;
+    }
     case keysim::ActionKind::Unicode:
         PressUnicode(a.units, a.unitCount);
         break;
@@ -105,8 +125,6 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
             text.swap(g_pendingText);
         }
 
-        g_active.store(true, std::memory_order_release);
-        g_abortRequested.store(false, std::memory_order_relaxed);
         if (!ReleaseModifiers()) {
             // 无法清除修饰键状态：继续注入会被目标程序解释成快捷键，放弃本次模拟。
             g_active.store(false, std::memory_order_release);
@@ -117,13 +135,12 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
         try {
             const std::vector<keysim::Action> actions = keysim::ExpandText(text);
             for (const keysim::Action& a : actions) {
-                if (EscPressed() ||
-                    g_abortRequested.exchange(false, std::memory_order_relaxed)) {
-                    break; // 用户要求中止（GetAsyncKeyState 轮询 + 钩子置标志双路径）
-                }
+                if (StopRequested()) break;                        // 用户要求中止
                 if (!g_run.load(std::memory_order_relaxed)) break; // 软件正在退出
                 ExecuteAction(a);
-                Sleep(g_speedMs.load(std::memory_order_relaxed));
+                if (!InterruptibleSleep(g_speedMs.load(std::memory_order_relaxed))) {
+                    break;
+                }
             }
         } catch (...) {
             // 内存不足等异常：放弃本次模拟，避免异常穿出线程过程触发
@@ -150,6 +167,10 @@ bool StartTypingFromText(std::wstring text) {
     if (g_active.exchange(true)) {
         return false; // 正在模拟中：忽略本次请求
     }
+    // 在请求线程上复位过期的中止标志（本函数与 RequestTypingAbort 同在钩子
+    // 线程，天然串行）：此后钩子置位的标志只会被 worker 消费，不会在模拟
+    // 启动窗口内被误清，导致“Esc 按了却被无视”。
+    g_abortRequested.store(false, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(g_textMutex);
         g_pendingText = std::move(text);

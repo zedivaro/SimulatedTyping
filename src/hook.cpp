@@ -37,32 +37,37 @@ bool g_physWinDown = false;
 
 // 读取剪贴板的 CF_UNICODETEXT。取不到文本（无记录、非文本、打不开、超限）返回 false。
 bool ClipboardText(std::wstring& out) {
-    if (!OpenClipboard(g_hwndOwner)) return false;
-    bool hasText = false;
-    HANDLE handle = GetClipboardData(CF_UNICODETEXT);
-    if (handle) {
-        // GlobalSize 是分配字节上界。剪贴板数据不保证 NUL 终止：先用上界排除
-        // 明显超限的分配，再在界内扫描终止符确定实际长度，防止越界读。
-        const SIZE_T bytes = GlobalSize(handle);
-        if (bytes >= sizeof(wchar_t) &&
-            bytes <= (kMaxSimulatedChars + 1) * sizeof(wchar_t)) {
-            const wchar_t* data = static_cast<const wchar_t*>(GlobalLock(handle));
-            if (data) {
-                const SIZE_T maxChars = bytes / sizeof(wchar_t);
-                SIZE_T length = 0;
-                while (length < maxChars && data[length] != L'\0') {
-                    ++length;
+    // 异常不得穿出系统回调边界：分配失败时按“无文本”放行常规粘贴。
+    try {
+        if (!OpenClipboard(g_hwndOwner)) return false;
+        bool hasText = false;
+        HANDLE handle = GetClipboardData(CF_UNICODETEXT);
+        if (handle) {
+            // GlobalSize 是分配字节上界。剪贴板数据不保证 NUL 终止：先用上界排除
+            // 明显超限的分配，再在界内扫描终止符确定实际长度，防止越界读。
+            const SIZE_T bytes = GlobalSize(handle);
+            if (bytes >= sizeof(wchar_t) &&
+                bytes <= (kMaxSimulatedChars + 1) * sizeof(wchar_t)) {
+                const wchar_t* data = static_cast<const wchar_t*>(GlobalLock(handle));
+                if (data) {
+                    const SIZE_T maxChars = bytes / sizeof(wchar_t);
+                    SIZE_T length = 0;
+                    while (length < maxChars && data[length] != L'\0') {
+                        ++length;
+                    }
+                    if (length > 0 && length <= kMaxSimulatedChars) {
+                        out.assign(data, length);
+                        hasText = true;
+                    }
+                    GlobalUnlock(handle);
                 }
-                if (length > 0 && length <= kMaxSimulatedChars) {
-                    out.assign(data, length);
-                    hasText = true;
-                }
-                GlobalUnlock(handle);
             }
         }
+        CloseClipboard();
+        return hasText;
+    } catch (...) {
+        return false;
     }
-    CloseClipboard();
-    return hasText;
 }
 
 // 根据物理（非注入）键盘事件更新修饰键状态。
@@ -80,6 +85,11 @@ void TrackPhysicalModifiers(const KBDLLHOOKSTRUCT& info, WPARAM wParam) {
     case VK_LWIN:
     case VK_RWIN:
         g_physWinDown = down;
+        if (down && TypingActive()) {
+            // 模拟中按下 Win：随后注入的 ←/→ 会被系统当作 Win+←/→ 级联触发
+            // 窗口贴靠，立即中止剩余模拟。
+            RequestTypingAbort();
+        }
         break;
     default:
         break;
@@ -95,7 +105,10 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
             if (info.vkCode == 'V') {
                 if (down) {
                     if (TypingActive() || g_swallowVKeyDown) {
-                        return 1; // 模拟中：吞掉一切物理 V（含自动重复与无修饰的 'v'）
+                        // 模拟中：吞掉一切物理 V（含自动重复与无修饰的 'v'）。
+                        // 置位标志让匹配的 keyup 也被吞掉，不留孤儿 keyup。
+                        g_swallowVKeyDown = true;
+                        return 1;
                     }
                     if (g_physCtrlDown && !g_physAltDown && !g_physWinDown) {
                         std::wstring text;

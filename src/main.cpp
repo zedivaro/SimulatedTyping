@@ -35,6 +35,9 @@ void NotifyFatal(const wchar_t* message) {
 // 速度设置（注册表持久化，HKCU\Software\SimulatedTyping\SpeedMs）
 // ---------------------------------------------------------------------------
 
+// 超过此值的速度视为输入错误（毫秒/键）。注册表被外部改成异常大值时启动加载也会夹紧。
+constexpr unsigned kMaxSpeedMs = 3600000; // 1 小时/键
+
 bool LoadSpeedFromRegistry(unsigned& value) {
     HKEY key = nullptr;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegistryKey, 0,
@@ -88,6 +91,12 @@ INT_PTR CALLBACK SpeedDialogProc(HWND dialog, UINT msg, WPARAM wParam, LPARAM lP
                             kWindowTitle, MB_OK | MB_ICONWARNING);
                 return TRUE;
             }
+            if (value > kMaxSpeedMs) {
+                // 极大值会让单步 Sleep 长达数日，Esc 中止形同虚设。
+                MessageBoxW(dialog, L"速度过大：上限为 3600000 毫秒/键。",
+                            kWindowTitle, MB_OK | MB_ICONWARNING);
+                return TRUE;
+            }
             g_speedMs.store(value, std::memory_order_relaxed);
             SaveSpeedToRegistry(value);
             EndDialog(dialog, IDOK);
@@ -125,6 +134,7 @@ bool AddTrayIcon() {
     g_nid.hIcon = static_cast<HICON>(LoadImageW(
         g_hInst, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON,
         GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
+    if (!g_nid.hIcon) return false;
     lstrcpynW(g_nid.szTip, kWindowTitle,
               sizeof(g_nid.szTip) / sizeof(g_nid.szTip[0]));
     return Shell_NotifyIconW(NIM_ADD, &g_nid) != FALSE;
@@ -143,7 +153,12 @@ void RemoveTrayIcon() {
 void ShowTrayMenu() {
     static bool g_trayMenuOpen = false;
     if (g_trayMenuOpen) {
-        return; // 速度对话框开着时，模态循环仍会派发托盘回调，防止重入
+        return; // 菜单/对话框打开期间，模态循环仍会派发托盘回调，防止重入
+    }
+    if (TypingActive()) {
+        // 防止剩余注入落进自己的菜单/对话框（文本中的 Enter 会被模态循环
+        // 翻译成默认按钮，可能把剪贴板内容当作速度写进注册表）。
+        RequestTypingAbort();
     }
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
@@ -160,13 +175,13 @@ void ShowTrayMenu() {
                                          pt.x, pt.y, g_hwnd, nullptr);
     DestroyMenu(menu);
     PostMessageW(g_hwnd, WM_NULL, 0, 0);
-    g_trayMenuOpen = false;
 
     if (command == IDM_SPEED) {
         DialogBoxParamW(g_hInst, MAKEINTRESOURCEW(IDD_SPEED), g_hwnd, SpeedDialogProc, 0);
     } else if (command == IDM_EXIT) {
         DestroyWindow(g_hwnd);
     }
+    g_trayMenuOpen = false; // 覆盖整个菜单+对话框期间（清零必须晚于模态对话框）
 }
 
 // ---------------------------------------------------------------------------
@@ -182,11 +197,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     if (g_msgTaskbarCreated != 0 && msg == g_msgTaskbarCreated) {
-        AddTrayIcon(); // Explorer 重启后恢复托盘图标
+        if (!AddTrayIcon()) {
+            // Explorer 重启后重加失败：无图标常驻会变成不可控僵尸（还占着
+            // 单实例互斥体，用户重启软件会被“已在运行”挡住），直接退出。
+            NotifyFatal(L"无法恢复托盘图标，程序即将退出。");
+            PostQuitMessage(0);
+        }
         return 0;
     }
     switch (msg) {
     case WM_DESTROY:
+        RemoveTrayIcon(); // 窗口销毁前移除图标（NIM_DELETE 依赖 hWnd 存活）
         PostQuitMessage(0);
         return 0;
     default:
@@ -253,6 +274,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         // 托盘图标是唯一的交互面：加不上就成了无法控制的常驻进程，必须退出。
         ShutdownKeyboardHook();
         ShutdownTyper();
+        if (g_nid.hIcon) {
+            DestroyIcon(g_nid.hIcon); // LoadImageW 已加载的句柄随失败路径释放
+            g_nid.hIcon = nullptr;
+        }
         NotifyFatal(L"无法创建托盘图标，程序即将退出。");
         return 1;
     }
@@ -263,9 +288,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         DispatchMessageW(&msg);
     }
 
-    RemoveTrayIcon();
+    ShutdownTyper();          // 先停模拟（吞 V 保护覆盖整个收尾期），再卸钩子
     ShutdownKeyboardHook();
-    ShutdownTyper();
     if (g_nid.hIcon) {
         DestroyIcon(g_nid.hIcon);
         g_nid.hIcon = nullptr;
