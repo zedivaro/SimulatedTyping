@@ -4,8 +4,9 @@
 //   * 按下 V 键且物理 Ctrl 按住、Alt 与 Win 未按住时（即 Ctrl+V 或 Ctrl+Shift+V）：
 //       - 剪贴板最近一条记录是文本且不超过上限 -> 吞掉本次按键，交给模拟线程逐字打出；
 //       - 剪贴板没有记录、不是文本或超限 -> 原样放行，目标程序保持常规粘贴行为。
-//   * 模拟进行期间屏蔽除 Esc 外的一切物理键盘与鼠标事件（含鼠标移动、点击、
-//     滚轮），防止杂散输入混进目标文档；Esc 照常放行并请求中止模拟。
+//   * 模拟进行期间屏蔽一切物理键盘与鼠标事件（含鼠标移动、点击、滚轮），
+//     防止杂散输入混进目标文档。Esc 也被吞掉，仅由本软件消费用于中止模拟，
+//     不传达给目标程序。
 //   * 模拟结束后触发键仍按住时，吞掉其自动重复直到松开：模拟开始会注入
 //     Ctrl/Shift 抬起，自动重复不再携带 Ctrl 状态，放行会把字面 'v' 漏进
 //     目标文档。
@@ -109,13 +110,10 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
             TrackPhysicalModifiers(info, wParam);
             const bool down = wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN;
             if (TypingActive()) {
-                // 模拟中：屏蔽除 Esc 外的一切物理键盘事件；Esc 放行并请求中止
-                // （Esc 本身照常传达给目标程序）。
-                if (info.vkCode == VK_ESCAPE) {
-                    if (down) RequestTypingAbort();
-                } else {
-                    return 1;
-                }
+                // 模拟中：屏蔽一切物理键盘事件，包括 Esc。Esc 由本软件消费
+                // 用于中止模拟，不传达给目标程序。
+                if (info.vkCode == VK_ESCAPE && down) RequestTypingAbort();
+                return 1;
             } else if (info.vkCode == 'V') {
                 if (down) {
                     if (g_swallowVKeyDown) {
