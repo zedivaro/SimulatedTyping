@@ -306,7 +306,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         DispatchMessageW(&msg);
     }
 
-    ShutdownTyper();          // 先停模拟线程（阻塞等待期间 LL 回调本就不可达，
+    ShutdownTyper();        // 先停模拟线程（阻塞等待期间 LL 回调本就不可达，
     ShutdownInputHooks();   // 不存在“吞 V 保护”窗口），再卸载键盘/鼠标钩子
     if (g_nid.hIcon) {
         DestroyIcon(g_nid.hIcon);

@@ -5,9 +5,10 @@
 // 再按 keysim 展开的动作组逐键注入：先打占位字符 X 并把光标移到其左侧，
 // 内容字符依次插入在 X 之前，每键之间停顿设定的毫秒数。
 // 每键注入前检查停止请求（Esc / 退出 / 注入失败——失败意味着“占位 X 恒
-// 在光标右侧”的不变量已不可信），一旦触发立即停止剩余内容，补注当前组的
-// 中止清理动作（撤销未就位的占位 X / 补删换行后的 Space），最后注入
-// Delete 删除占位 X（Leader 未完成时无需 Delete）。
+// 在光标右侧”的不变量在 Leader 组内已不可信），一旦触发立即停止剩余内容，
+// 补注当前组的中止清理动作（还原击落 Space / 撤销未就位的占位 X / 补删
+// 新行的缩进与辅助空格），最后注入 Delete 删除占位 X（Leader 未完成时
+// 无需 Delete）。
 #include <windows.h>
 #include <mutex>
 #include <utility>
@@ -158,8 +159,13 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
                         break;
                     }
                     if (!ExecuteAction(a)) {
-                        // 注入失败：占位 X 恒在光标右侧的不变量已不可信，
-                        // 立即中止且不计入已完成数，避免结尾 Delete 误删文档内容。
+                        // 注入失败：立即中止本次模拟，completed 只计成功注入
+                        // 的动作，由 AbortCleanup 按实际设备状态补注清理。
+                        // 结尾 Delete 的取舍分两种情况（见 leaderDone）：
+                        //   Leader 组未完成（leaderDone=false）——占位 X 可能
+                        //   不在光标右侧，不发送结尾 Delete，宁可残留 X；
+                        //   Leader 已完成——任何失败都不会把光标移到 X 右侧，
+                        //   结尾 Delete 照发，精确清除占位 X。
                         aborted = true;
                         break;
                     }

@@ -268,6 +268,15 @@ int main() {
             auto c = AbortCleanup(groups[0], 1);
             CHECK(c.size() == 1 && IsVk(c[0], VK_BACK) && !c[0].extended);
         }
+        auto nl = ExpandTextGroups(L"\n");
+        if (nl.size() == 2) {
+            // Newline 中止清理动作（Shift+Home 之后的 Backspace、k=1 的
+            // 还原 Backspace）同样不得标扩展键
+            auto c4 = AbortCleanup(nl[1], 4);
+            CHECK(c4.size() == 2 && IsVk(c4[1], VK_BACK) && !c4[1].extended);
+            auto c1 = AbortCleanup(nl[1], 1);
+            CHECK(c1.size() == 1 && IsVk(c1[0], VK_BACK) && !c1[0].extended);
+        }
     }
 
     // 16. 制表符混在串中的顺序
@@ -278,6 +287,62 @@ int main() {
             CHECK(IsUnicode(a[2], L'a'));
             CHECK(IsVk(a[3], VK_TAB));
             CHECK(IsUnicode(a[4], L'b'));
+        }
+    }
+
+    // 17. 连续两个换行：两组 Newline 相邻，组间无隐式状态
+    {
+        auto a = ExpandText(L"\n\n");
+        CHECK(a.size() == 2 + kNewlineActions * 2);
+        if (a.size() == 14) {
+            CHECK(IsShiftHome(a[6]) && IsVk(a[7], VK_BACK));
+            CHECK(IsVk(a[8], VK_SPACE) && IsVk(a[9], VK_BACK));
+            CHECK(IsVk(a[10], VK_RETURN));
+            CHECK(IsShiftHome(a[12]) && IsVk(a[13], VK_BACK));
+        }
+    }
+
+    // 18. 首字符是换行：Leader 之后紧跟 Newline 组
+    {
+        auto a = ExpandText(L"\na");
+        CHECK(a.size() == 2 + kNewlineActions + 1);
+        if (a.size() == 9) {
+            CHECK(IsUnicode(a[0], L'X'));
+            CHECK(IsVk(a[1], VK_LEFT));
+            CHECK(IsVk(a[2], VK_SPACE));
+            CHECK(IsVk(a[3], VK_BACK));
+            CHECK(IsVk(a[4], VK_RETURN));
+            CHECK(IsVk(a[5], VK_SPACE));
+            CHECK(IsShiftHome(a[6]));
+            CHECK(IsVk(a[7], VK_BACK));
+            CHECK(IsUnicode(a[8], L'a'));
+        }
+    }
+
+    // 19. 混排全量锚点：Leader/Char/Newline/Tab/Char/Newline/Char
+    {
+        auto a = ExpandText(L"a\n\tb\r\nc");
+        CHECK(a.size() == 2 + 1 + kNewlineActions + 1 + 1 + kNewlineActions + 1);
+        if (a.size() == 18) {
+            CHECK(IsUnicode(a[0], L'X') && IsVk(a[1], VK_LEFT));
+            CHECK(IsUnicode(a[2], L'a'));
+            CHECK(IsVk(a[3], VK_SPACE) && IsVk(a[4], VK_BACK) && IsVk(a[5], VK_RETURN));
+            CHECK(IsVk(a[6], VK_SPACE) && IsShiftHome(a[7]) && IsVk(a[8], VK_BACK));
+            CHECK(IsVk(a[9], VK_TAB));
+            CHECK(IsUnicode(a[10], L'b'));
+            CHECK(IsVk(a[11], VK_SPACE) && IsVk(a[12], VK_BACK) && IsVk(a[13], VK_RETURN));
+            CHECK(IsVk(a[14], VK_SPACE) && IsShiftHome(a[15]) && IsVk(a[16], VK_BACK));
+            CHECK(IsUnicode(a[17], L'c'));
+        }
+    }
+
+    // 20. "\r\n\r\n"：两个换行组
+    {
+        auto groups = ExpandTextGroups(L"\r\n\r\n");
+        CHECK(groups.size() == 3);
+        if (groups.size() == 3) {
+            CHECK(groups[1].kind == ActionGroupKind::Newline &&
+                  groups[2].kind == ActionGroupKind::Newline);
         }
     }
 

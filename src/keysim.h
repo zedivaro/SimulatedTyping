@@ -50,8 +50,9 @@ struct ActionGroup {
 std::vector<ActionGroup> ExpandTextGroups(const std::wstring& text);
 
 // 中止清理：某组动作执行到第 completed 个完成后被中止时，为清除残留的
-// 辅助键（未撤销的占位 X、换行后未删的 Space）还应立即注入的动作。
-// 已打出的内容字符不属于残留，不会被清理。纯函数，无副作用。
+// 辅助键或未就位的占位符还应立即注入的动作（还原击落 Space / 撤销未就位
+// 的占位 X / 补删新行的缩进与辅助空格）。已打出的内容字符不属于残留，
+// 不会被清理。纯函数，无副作用。
 std::vector<Action> AbortCleanup(const ActionGroup& group, size_t completed);
 
 // 结束动作：删除光标右侧占位字符 X 的 Delete 键。执行方在模拟结束或
