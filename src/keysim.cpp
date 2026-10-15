@@ -6,7 +6,8 @@ namespace keysim {
 namespace {
 
 bool IsExtendedVk(WORD vk) {
-    return vk == VK_LEFT || vk == VK_RIGHT || vk == VK_UP || vk == VK_DOWN;
+    return vk == VK_DELETE || vk == VK_LEFT || vk == VK_RIGHT ||
+           vk == VK_UP || vk == VK_DOWN;
 }
 
 Action TapVk(WORD vk) {
@@ -40,16 +41,14 @@ Action Unicode2(wchar_t high, wchar_t low) {
     return a;
 }
 
-// 其他字符的防自动补全五连：#、←、字符、→、Backspace。
-// 目标编辑器看到的是 "#" 与字符先后输入且中间有光标移动，从而不会弹出补全。
-ActionGroup CharTrickGroup(const Action& character) {
+// 开头占位组：先注入 X，再把光标移到 X 左侧。此后所有内容字符都插入在
+// X 之前（把 X 不断推向右），首个内容键因此不再是行首，编辑器不会弹出
+// 自动补全；结束时注入 Delete 即可删掉光标右侧的 X。
+ActionGroup LeaderGroup() {
     ActionGroup group;
-    group.kind = ActionGroupKind::CharTrick;
-    group.actions.push_back(Unicode1(L'#'));
+    group.kind = ActionGroupKind::Leader;
+    group.actions.push_back(Unicode1(L'X'));
     group.actions.push_back(TapVk(VK_LEFT));
-    group.actions.push_back(character);
-    group.actions.push_back(TapVk(VK_RIGHT));
-    group.actions.push_back(TapVk(VK_BACK));
     return group;
 }
 
@@ -62,10 +61,21 @@ ActionGroup NewlineGroup() {
     return group;
 }
 
+ActionGroup CharGroup(const Action& character) {
+    ActionGroup group;
+    group.kind = ActionGroupKind::Char;
+    group.actions.push_back(character);
+    return group;
+}
+
 } // namespace
 
 std::vector<ActionGroup> ExpandTextGroups(const std::wstring& text) {
     std::vector<ActionGroup> groups;
+    if (text.empty()) {
+        return groups; // 无内容：无占位、无结束 Delete
+    }
+    groups.push_back(LeaderGroup());
     for (size_t i = 0; i < text.size(); ++i) {
         const wchar_t ch = text[i];
         if (ch == L'\r' && i + 1 < text.size() && text[i + 1] == L'\n') {
@@ -76,11 +86,11 @@ std::vector<ActionGroup> ExpandTextGroups(const std::wstring& text) {
             // 换行（含孤立的 '\r'，即旧 Mac 行尾）。
             groups.push_back(NewlineGroup());
         } else if (IS_HIGH_SURROGATE(ch) && i + 1 < text.size() && IS_LOW_SURROGATE(text[i + 1])) {
-            // 代理对是一个码位，作为整体包装进同一套 # 技巧。
-            groups.push_back(CharTrickGroup(Unicode2(ch, text[i + 1])));
+            // 代理对是一个码位，作为整体注入。
+            groups.push_back(CharGroup(Unicode2(ch, text[i + 1])));
             ++i;
         } else {
-            groups.push_back(CharTrickGroup(Unicode1(ch)));
+            groups.push_back(CharGroup(Unicode1(ch)));
         }
     }
     return groups;
@@ -93,14 +103,9 @@ std::vector<Action> AbortCleanup(const ActionGroup& group, size_t completed) {
         return out; // 组未开始或已完成：无残留
     }
     switch (group.kind) {
-    case ActionGroupKind::CharTrick:
-        // 残留的是还没删掉的 '#'（字符本体不属于残留）：
-        //   完成到第 1 个（光标在 # 后）          -> Backspace
-        //   完成到第 2/3 个（光标在 # 前/字符与 # 之间）-> 先 → 越过 # 再 Backspace
-        //   完成到第 4 个（光标在 # 后）          -> Backspace
-        if (completed == 2 || completed == 3) {
-            out.push_back(TapVk(VK_RIGHT));
-        }
+    case ActionGroupKind::Leader:
+        // 只打了 X、还没打 ←（光标在 X 右侧）：Backspace 撤销 X。
+        // ← 已打时占位 X 交给结尾的 Delete，无需清理。
         out.push_back(TapVk(VK_BACK));
         break;
     case ActionGroupKind::Newline:
@@ -110,8 +115,15 @@ std::vector<Action> AbortCleanup(const ActionGroup& group, size_t completed) {
             out.push_back(CtrlBackspace());
         }
         break;
+    case ActionGroupKind::Char:
+        // 单动作组，不存在部分状态。
+        break;
     }
     return out;
+}
+
+Action PlaceholderDeleteAction() {
+    return TapVk(VK_DELETE);
 }
 
 std::vector<Action> ExpandText(const std::wstring& text) {

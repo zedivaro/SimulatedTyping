@@ -2,10 +2,11 @@
 //
 // 工作线程等待启动事件；被唤醒后取出文本快照，先合成释放用户物理按住的
 // Ctrl/Shift（否则注入的字符会被目标程序解释成 Ctrl+C 之类的快捷键），
-// 再按 keysim 展开的动作组逐键注入，每键之间停顿设定的毫秒数。
+// 再按 keysim 展开的动作组逐键注入：先打占位字符 X 并把光标移到其左侧，
+// 内容字符依次插入在 X 之前，每键之间停顿设定的毫秒数。
 // 模拟期间每键注入前检查中止请求（Esc / 退出），一旦触发立即停止剩余
-// 内容，并补注当前字符组的中止清理动作（删掉可能残留的 # 或换行后的
-// Space），然后收尾。
+// 内容，补注当前组的中止清理动作（撤销未就位的占位 X / 补删换行后的
+// Space），最后注入 Delete 删除占位 X（Leader 未完成时无需 Delete）。
 #include <windows.h>
 #include <mutex>
 #include <utility>
@@ -136,6 +137,7 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
 
         try {
             const std::vector<keysim::ActionGroup> groups = keysim::ExpandTextGroups(text);
+            bool leaderDone = false;
             bool aborted = false;
             for (const keysim::ActionGroup& group : groups) {
                 size_t completed = 0;
@@ -155,16 +157,24 @@ DWORD WINAPI TyperThreadProc(LPVOID) {
                         break;
                     }
                 }
+                if (group.kind == keysim::ActionGroupKind::Leader &&
+                    completed == group.actions.size()) {
+                    leaderDone = true; // 占位 X 已就位：结束/中止时需 Delete 删除
+                }
                 if (aborted) {
-                    // 中止清理：立即（不按速度停顿）补注清除残留辅助键的动作，
-                    // 避免未删掉的 # / 换行后的 Space 留在文档里。清理只有
-                    // 一两个键，期间不再响应中止，保证清理完整。
+                    // 中止清理：立即（不按速度停顿）补注清除残留辅助键的动作
+                    // （撤销未就位的占位 X / 补删换行后的 Space），期间不再
+                    // 响应中止，保证清理完整。
                     for (const keysim::Action& a :
                          keysim::AbortCleanup(group, completed)) {
                         ExecuteAction(a);
                     }
                     break;
                 }
+            }
+            if (leaderDone) {
+                // 模拟结束或中止：删除光标右侧的占位字符 X。
+                ExecuteAction(keysim::PlaceholderDeleteAction());
             }
         } catch (...) {
             // 内存不足等异常：放弃本次模拟，避免异常穿出线程过程触发
