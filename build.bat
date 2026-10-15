@@ -44,9 +44,9 @@ if not "%errorlevel%"=="0" (
 )
 
 rem --- resources ---
-rem res\app.rc references "..\logo.ico", "app.manifest" and "resource.h":
-rem data files (ico/manifest) resolve relative to the .rc file's own
-rem directory; "resource.h" resolves through the /i src search path.
+rem res\app.rc references "logo.ico", "app.manifest" (same res\ directory as
+rem the .rc file itself) and "resource.h" (resolved through the /i src search
+rem path). Keep them in sync if you move files.
 rc /nologo /fo build\app.res /i res /i src res\app.rc
 if not "%errorlevel%"=="0" exit /b 1
 
