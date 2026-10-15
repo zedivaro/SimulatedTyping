@@ -1,7 +1,7 @@
 // keysim.h —— 把剪贴板文本展开成“模拟按键动作”序列的纯逻辑。
 // 展开规则（用于规避目标编辑器的自动补全）：
 //   开始 -> 注入占位字符 X，再把光标移到 X 左侧（Leader 组）；
-//   换行 '\n' -> Enter、Space、Shift+Ctrl+←（选中辅助空格）、Backspace；
+//   换行 '\n' -> Enter、Space、Ctrl+Backspace；
 //   制表 '\t' -> 真实的 Tab 键（Unicode 注入的 \t 在部分编辑器里无效）；
 //   其他字符 -> 字符本体（Unicode 注入）；
 //   结束/中止 -> 由执行方注入 Delete，删除光标右侧的占位 X。
@@ -18,7 +18,7 @@ namespace keysim {
 enum class ActionKind {
     TapVk,          // 按下并抬起一个虚拟键
     Unicode,        // 以 KEYEVENTF_UNICODE 注入 1~2 个 UTF-16 码元
-    SelectWordLeft, // 按住 Shift+Ctrl 并按 ←，再抬起（选中光标左侧内容）
+    CtrlBackspace,  // 按住 Ctrl 并按下 Backspace（复合动作）
 };
 
 struct Action {
@@ -31,7 +31,7 @@ struct Action {
 
 enum class ActionGroupKind {
     Leader,   // 开头占位：X、←。完成后由执行方在结束/中止时补注 Delete。
-    Newline,  // 换行：Enter、Space、Shift+Ctrl+←、Backspace
+    Newline,  // 换行：Enter、Space、Ctrl+Backspace
     Char,     // 普通字符：字符本体的 Unicode 注入（单动作，无部分状态）
 };
 

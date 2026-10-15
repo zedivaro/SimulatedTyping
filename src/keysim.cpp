@@ -18,6 +18,12 @@ Action TapVk(WORD vk) {
     return a;
 }
 
+Action CtrlBackspace() {
+    Action a;
+    a.kind = ActionKind::CtrlBackspace;
+    return a;
+}
+
 Action Unicode1(wchar_t unit) {
     Action a;
     a.kind = ActionKind::Unicode;
@@ -32,13 +38,6 @@ Action Unicode2(wchar_t high, wchar_t low) {
     a.units[0] = high;
     a.units[1] = low;
     a.unitCount = 2;
-    return a;
-}
-
-// 选中光标左侧内容（Shift+Ctrl+← 组合键，原子注入）。
-Action SelectWordLeft() {
-    Action a;
-    a.kind = ActionKind::SelectWordLeft;
     return a;
 }
 
@@ -58,11 +57,7 @@ ActionGroup NewlineGroup() {
     group.kind = ActionGroupKind::Newline;
     group.actions.push_back(TapVk(VK_RETURN));
     group.actions.push_back(TapVk(VK_SPACE));
-    // 用「选中」代替「删除」：部分编辑器（如 Visual Studio）的 Ctrl+BS 会
-    // 跨行删除，Shift+Ctrl+← 只扩展选区，Backspace 仅删除选中的辅助空格，
-    // 换行本身不会被误删。
-    group.actions.push_back(SelectWordLeft());
-    group.actions.push_back(TapVk(VK_BACK));
+    group.actions.push_back(CtrlBackspace());
     return group;
 }
 
@@ -118,13 +113,10 @@ std::vector<Action> AbortCleanup(const ActionGroup& group, size_t completed) {
         out.push_back(TapVk(VK_BACK));
         break;
     case ActionGroupKind::Newline:
-        // Enter 与 Space 已注入而选中+删除未完成时，Space 是辅助键，
-        // 补齐剩余动作（先选中再退格）；只有 Enter 时没有辅助键残留。
+        // Enter 与 Space 已注入而 Ctrl+Backspace 未注入时，Space 是辅助键，
+        // 补上删除动作；只有 Enter 时没有辅助键残留。
         if (completed == 2) {
-            out.push_back(SelectWordLeft());
-            out.push_back(TapVk(VK_BACK));
-        } else if (completed == 3) {
-            out.push_back(TapVk(VK_BACK));
+            out.push_back(CtrlBackspace());
         }
         break;
     case ActionGroupKind::Char:

@@ -28,8 +28,8 @@ bool IsUnicode(const Action& a, wchar_t ch) {
     return a.kind == ActionKind::Unicode && a.unitCount == 1 && a.units[0] == ch;
 }
 
-bool IsSelectWordLeft(const Action& a) {
-    return a.kind == ActionKind::SelectWordLeft;
+bool IsCtrlBackspace(const Action& a) {
+    return a.kind == ActionKind::CtrlBackspace;
 }
 
 } // namespace
@@ -78,16 +78,11 @@ int main() {
     }
 
     // 4. 换行组："\r\n" 单组、孤立 '\r' 单组、"\r\r" 两组
-    //    换行组动作：Enter、Space、Shift+Ctrl+←（选中辅助空格）、Backspace
     {
         auto a = ExpandTextGroups(L"\r\n");
         CHECK(a.size() == 2);
         if (a.size() == 2) {
-            CHECK(a[1].kind == ActionGroupKind::Newline && a[1].actions.size() == 4);
-            CHECK(IsVk(a[1].actions[0], VK_RETURN) && !a[1].actions[0].extended);
-            CHECK(IsVk(a[1].actions[1], VK_SPACE) && !a[1].actions[1].extended);
-            CHECK(IsSelectWordLeft(a[1].actions[2]));
-            CHECK(IsVk(a[1].actions[3], VK_BACK) && !a[1].actions[3].extended);
+            CHECK(a[1].kind == ActionGroupKind::Newline && a[1].actions.size() == 3);
         }
         auto b = ExpandTextGroups(L"\r");
         CHECK(b.size() == 2);
@@ -131,18 +126,16 @@ int main() {
         }
     }
 
-    // 8. 中止清理：Newline 组——Space 已打、选中+删除未完成时补齐剩余动作
+    // 8. 中止清理：Newline 组——Space 已打、Ctrl+Backspace 未打时补删 Space
     {
         auto groups = ExpandTextGroups(L"\n");
         CHECK(groups.size() == 2);
         if (groups.size() == 2) {
             const ActionGroup& g = groups[1];
-            auto c2 = AbortCleanup(g, 2); // Enter+Space 已打：选中空格并删除
-            CHECK(c2.size() == 2 && IsSelectWordLeft(c2[0]) && IsVk(c2[1], VK_BACK));
-            auto c3 = AbortCleanup(g, 3); // 空格已选中：补 Backspace 删除选区
-            CHECK(c3.size() == 1 && IsVk(c3[0], VK_BACK));
+            auto c2 = AbortCleanup(g, 2);
+            CHECK(c2.size() == 1 && IsCtrlBackspace(c2[0]));
             CHECK(AbortCleanup(g, 1).empty()); // 只有 Enter：无辅助键残留
-            CHECK(AbortCleanup(g, 4).empty()); // 组已完成
+            CHECK(AbortCleanup(g, 3).empty()); // 组已完成
         }
     }
 
@@ -174,15 +167,14 @@ int main() {
     // 11. 扁平顺序：换行规则嵌在内容流中
     {
         auto a = ExpandText(L"a\n");
-        CHECK(a.size() == 2 + 1 + 4);
-        if (a.size() == 7) {
+        CHECK(a.size() == 2 + 1 + 3);
+        if (a.size() == 6) {
             CHECK(IsUnicode(a[0], L'X'));
             CHECK(IsVk(a[1], VK_LEFT));
             CHECK(IsUnicode(a[2], L'a'));
             CHECK(IsVk(a[3], VK_RETURN));
             CHECK(IsVk(a[4], VK_SPACE));
-            CHECK(IsSelectWordLeft(a[5]));
-            CHECK(IsVk(a[6], VK_BACK));
+            CHECK(IsCtrlBackspace(a[5]));
         }
     }
 
@@ -198,17 +190,15 @@ int main() {
         CHECK(groups.size() == 4);
         if (groups.size() == 4) {
             CHECK(groups[1].kind == ActionGroupKind::Char);
-            CHECK(groups[2].kind == ActionGroupKind::Newline && groups[2].actions.size() == 4);
+            CHECK(groups[2].kind == ActionGroupKind::Newline && groups[2].actions.size() == 3);
             CHECK(groups[3].kind == ActionGroupKind::Char);
         }
         auto a = ExpandText(L"a\r\nb");
-        CHECK(a.size() == 2 + 1 + 4 + 1);
-        if (a.size() == 8) {
+        CHECK(a.size() == 2 + 1 + 3 + 1);
+        if (a.size() == 7) {
             CHECK(IsUnicode(a[2], L'a'));
             CHECK(IsVk(a[3], VK_RETURN));
-            CHECK(IsSelectWordLeft(a[5]));
-            CHECK(IsVk(a[6], VK_BACK));
-            CHECK(IsUnicode(a[7], L'b'));
+            CHECK(IsUnicode(a[6], L'b'));
         }
     }
 
@@ -231,8 +221,8 @@ int main() {
     // 15. extended 负向断言：Enter/Space/Backspace 不得误标扩展键
     {
         auto a = ExpandText(L"\n");
-        CHECK(a.size() == 6);
-        if (a.size() == 6) {
+        CHECK(a.size() == 5);
+        if (a.size() == 5) {
             CHECK(IsVk(a[2], VK_RETURN) && !a[2].extended);
             CHECK(IsVk(a[3], VK_SPACE) && !a[3].extended);
         }

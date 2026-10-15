@@ -96,28 +96,20 @@ bool ExecuteAction(const keysim::Action& a) {
         return SendInput(static_cast<UINT>(a.unitCount * 2), in, sizeof(INPUT)) ==
                static_cast<UINT>(a.unitCount * 2);
     }
-    case keysim::ActionKind::SelectWordLeft: {
-        // Shift+Ctrl+← 的组合键：单次 SendInput 原子生效。选择语义不直接
-        // 删除内容，用于选中换行后注入的辅助空格（部分编辑器的 Ctrl+BS
-        // 会跨行删除，选中再退格可避免换行被误删）。
-        INPUT in[6]{};
+    case keysim::ActionKind::CtrlBackspace: {
+        // 单次 SendInput 原子生效：进程若在动作间被终止，不会残留半开的 Ctrl。
+        INPUT in[4]{};
         in[0].type = INPUT_KEYBOARD;
-        in[0].ki.wVk = VK_SHIFT;
+        in[0].ki.wVk = VK_CONTROL;
         in[1].type = INPUT_KEYBOARD;
-        in[1].ki.wVk = VK_CONTROL;
+        in[1].ki.wVk = VK_BACK;
         in[2].type = INPUT_KEYBOARD;
-        in[2].ki.wVk = VK_LEFT;
-        in[2].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
+        in[2].ki.wVk = VK_BACK;
+        in[2].ki.dwFlags = KEYEVENTF_KEYUP;
         in[3].type = INPUT_KEYBOARD;
-        in[3].ki.wVk = VK_LEFT;
-        in[3].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
-        in[4].type = INPUT_KEYBOARD;
-        in[4].ki.wVk = VK_CONTROL;
-        in[4].ki.dwFlags = KEYEVENTF_KEYUP;
-        in[5].type = INPUT_KEYBOARD;
-        in[5].ki.wVk = VK_SHIFT;
-        in[5].ki.dwFlags = KEYEVENTF_KEYUP;
-        return SendInput(6, in, sizeof(INPUT)) == 6;
+        in[3].ki.wVk = VK_CONTROL;
+        in[3].ki.dwFlags = KEYEVENTF_KEYUP;
+        return SendInput(4, in, sizeof(INPUT)) == 4;
     }
     }
     return true;
