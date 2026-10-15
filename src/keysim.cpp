@@ -6,8 +6,8 @@ namespace keysim {
 namespace {
 
 bool IsExtendedVk(WORD vk) {
-    return vk == VK_DELETE || vk == VK_LEFT || vk == VK_RIGHT ||
-           vk == VK_UP || vk == VK_DOWN;
+    return vk == VK_DELETE || vk == VK_HOME || vk == VK_LEFT ||
+           vk == VK_RIGHT || vk == VK_UP || vk == VK_DOWN;
 }
 
 Action TapVk(WORD vk) {
@@ -15,12 +15,6 @@ Action TapVk(WORD vk) {
     a.kind = ActionKind::TapVk;
     a.vk = vk;
     a.extended = IsExtendedVk(vk);
-    return a;
-}
-
-Action CtrlBackspace() {
-    Action a;
-    a.kind = ActionKind::CtrlBackspace;
     return a;
 }
 
@@ -41,6 +35,15 @@ Action Unicode2(wchar_t high, wchar_t low) {
     return a;
 }
 
+// 选中光标左侧行首空白至光标处（Shift+Home 组合键，原子注入）。
+// 智能 Home 语义在 VS/VS Code/IntelliJ/Notepad++/Sublime 一致：光标停在
+// 首个非空白字符处时再按 Home 移到第 0 列——占位 X 恰好保证这一点。
+Action ShiftHome() {
+    Action a;
+    a.kind = ActionKind::ShiftHome;
+    return a;
+}
+
 // 开头占位组：先注入 X，再把光标移到 X 左侧。此后所有内容字符都插入在
 // X 之前（把 X 不断推向右），首个内容键因此不再是行首，编辑器不会弹出
 // 自动补全；结束时注入 Delete 即可删掉光标右侧的 X。
@@ -57,7 +60,11 @@ ActionGroup NewlineGroup() {
     group.kind = ActionGroupKind::Newline;
     group.actions.push_back(TapVk(VK_RETURN));
     group.actions.push_back(TapVk(VK_SPACE));
-    group.actions.push_back(CtrlBackspace());
+    // 用「选中」代替「删除」：部分编辑器（如 Visual Studio）的 Ctrl+BS 会
+    // 跨行删除，Shift+Home 只把选区扩展到行首（智能 Home 语义），Backspace
+    // 仅删除选中的“行首空白+辅助空格”，换行本身不会被误删。
+    group.actions.push_back(ShiftHome());
+    group.actions.push_back(TapVk(VK_BACK));
     return group;
 }
 
@@ -113,10 +120,13 @@ std::vector<Action> AbortCleanup(const ActionGroup& group, size_t completed) {
         out.push_back(TapVk(VK_BACK));
         break;
     case ActionGroupKind::Newline:
-        // Enter 与 Space 已注入而 Ctrl+Backspace 未注入时，Space 是辅助键，
-        // 补上删除动作；只有 Enter 时没有辅助键残留。
+        // Enter 与 Space 已注入而选中+删除未完成时，Space 与行首空白是
+        // 辅助内容，补齐剩余动作（先选中再退格）；只有 Enter 时没有残留。
         if (completed == 2) {
-            out.push_back(CtrlBackspace());
+            out.push_back(ShiftHome());
+            out.push_back(TapVk(VK_BACK));
+        } else if (completed == 3) {
+            out.push_back(TapVk(VK_BACK));
         }
         break;
     case ActionGroupKind::Char:

@@ -14,7 +14,7 @@
 | 模拟阶段 | 模拟的按键 |
 |----------------|------------|
 | 开始 | <kbd>X</kbd> → <kbd>←</kbd>（放置占位符） |
-| 换行符（`\r\n`、`\n` 或孤立的 `\r`） | <kbd>Enter</kbd> → <kbd>Space</kbd> → <kbd>Ctrl</kbd>+<kbd>Backspace</kbd> |
+| 换行符（`\r\n`、`\n` 或孤立的 `\r`） | <kbd>Enter</kbd> → <kbd>Space</kbd> → <kbd>Shift</kbd>+<kbd>Home</kbd> → <kbd>Backspace</kbd> |
 | 制表符（`\t`） | <kbd>Tab</kbd> 键 |
 | 其他任意字符（含中文） | 字符本体（Unicode 注入） |
 | 结束 / 中止 | <kbd>Delete</kbd>（删除占位 X） |
@@ -83,6 +83,9 @@ build.bat
     重按一次对应的修饰键即可恢复。
   - 其他软件的键盘钩子若拦截按键且不向下转发，可能影响本软件触发；
     遇到时重启本软件。
+  - 换行后的「Shift+Home」依赖编辑器的智能 Home 语义（光标已在首个非空白
+    字符处时移到第 0 列），主流编辑器行为一致；个别编辑器若不支持，最坏
+    结果是行首残留自动缩进，不会丢失内容。
   - 换行后的「Space + Ctrl+Backspace」依赖编辑器「Ctrl+Backspace 只删除
     行内空白」的语义；个别编辑器（如 Visual Studio 的部分模式）可能跨行
     删除上一行内容。如在某编辑器中粘贴含换行文本出现内容丢失，请反馈。

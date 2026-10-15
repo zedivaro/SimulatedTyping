@@ -97,18 +97,23 @@ bool ExecuteAction(const keysim::Action& a) {
         return SendInput(static_cast<UINT>(a.unitCount * 2), in, sizeof(INPUT)) ==
                static_cast<UINT>(a.unitCount * 2);
     }
-    case keysim::ActionKind::CtrlBackspace: {
-        // 单次 SendInput 原子生效：进程若在动作间被终止，不会残留半开的 Ctrl。
+    case keysim::ActionKind::ShiftHome: {
+        // Shift+Home 的智能 Home 语义（VS/VS Code/IntelliJ/Notepad++/
+        // Sublime 官方文档一致）：光标停在首个非空白字符处时，Home 把光标
+        // 移到第 0 列——占位 X 恰好保证这一点，因此 Shift+Home 选中
+        // “行首空白+辅助空格”，随后的 Backspace 一次删净；最坏退化是
+        // 缩进残留，结构上不会误删换行或内容。
         INPUT in[4]{};
         in[0].type = INPUT_KEYBOARD;
-        in[0].ki.wVk = VK_CONTROL;
+        in[0].ki.wVk = VK_SHIFT;
         in[1].type = INPUT_KEYBOARD;
-        in[1].ki.wVk = VK_BACK;
+        in[1].ki.wVk = VK_HOME;
+        in[1].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
         in[2].type = INPUT_KEYBOARD;
-        in[2].ki.wVk = VK_BACK;
-        in[2].ki.dwFlags = KEYEVENTF_KEYUP;
+        in[2].ki.wVk = VK_HOME;
+        in[2].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
         in[3].type = INPUT_KEYBOARD;
-        in[3].ki.wVk = VK_CONTROL;
+        in[3].ki.wVk = VK_SHIFT;
         in[3].ki.dwFlags = KEYEVENTF_KEYUP;
         return SendInput(4, in, sizeof(INPUT)) == 4;
     }
