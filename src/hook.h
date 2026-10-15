@@ -12,3 +12,8 @@ void ShutdownKeyboardHook();
 // 打开期间 Ctrl+V 放行（对话框内是原生粘贴），不启动模拟，
 // 避免注入落进自己的 UI。
 void SetOwnModalUIOpen(bool open);
+
+// 模拟打字功能总开关（托盘菜单「启用」勾选项）。关闭时 Ctrl+V 原样放行；
+// 启动默认为开启。
+void SetSimulatedTypingEnabled(bool enabled);
+bool SimulatedTypingEnabled();

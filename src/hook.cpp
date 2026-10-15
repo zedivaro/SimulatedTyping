@@ -15,6 +15,7 @@
 //     超时恰好错过某个修饰键事件，物理状态可能失真，重按该键即可恢复。
 //   * 本软件自己注入的按键带 LLKHF_INJECTED 标记，直接放行，避免死循环。
 #include <windows.h>
+#include <atomic>
 #include <string>
 #include <utility>
 #include "hook.h"
@@ -31,6 +32,9 @@ HHOOK g_hHook = nullptr;
 // 自有模态 UI（托盘菜单/对话框）打开期间为 true：钩子放行 Ctrl+V，
 // 不启动模拟。仅 UI 线程读写（与钩子回调同线程），无并发访问。
 bool g_ownModalUIOpen = false;
+// 模拟打字功能总开关（托盘菜单「启用」）。UI 线程写、钩子回调读，
+// 启动默认开启。
+std::atomic<bool> g_enabled{true};
 // 模拟启动成功时置位，直到触发的 V 键松开（期间吞掉一切物理 V 按键）。
 bool g_swallowVKeyDown = false;
 // 物理修饰键状态：只根据非注入事件更新，免疫本软件注入的 keyup 污染。
@@ -117,8 +121,9 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                     }
                     // 自有模态 UI 打开期间放行（对话框编辑框里是原生粘贴），
                     // 避免模拟注入落进自己的菜单/对话框。
-                    if (!g_ownModalUIOpen && g_physCtrlDown && !g_physAltDown &&
-                        !g_physWinDown) {
+                    // 功能总开关关闭时同样放行，保持常规粘贴。
+                    if (!g_ownModalUIOpen && SimulatedTypingEnabled() &&
+                        g_physCtrlDown && !g_physAltDown && !g_physWinDown) {
                         std::wstring text;
                         if (ClipboardText(text) && StartTypingFromText(std::move(text))) {
                             g_swallowVKeyDown = true;
@@ -157,4 +162,12 @@ void ShutdownKeyboardHook() {
 
 void SetOwnModalUIOpen(bool open) {
     g_ownModalUIOpen = open;
+}
+
+void SetSimulatedTypingEnabled(bool enabled) {
+    g_enabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool SimulatedTypingEnabled() {
+    return g_enabled.load(std::memory_order_relaxed);
 }

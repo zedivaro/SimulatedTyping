@@ -12,6 +12,7 @@
 namespace {
 
 constexpr UINT WM_APP_TRAY = WM_APP + 1;      // 托盘回调消息
+constexpr int IDM_ENABLE = 2003;              // 菜单：启用（可勾选总开关）
 constexpr int IDM_SPEED = 2001;               // 菜单：修改打字速度
 constexpr int IDM_EXIT = 2002;                // 菜单：退出
 constexpr UINT kTrayIconId = 1;               // 托盘图标 ID（与 NIM_DELETE 一致）
@@ -166,6 +167,10 @@ void ShowTrayMenu() {
     if (!menu) return;
     g_trayMenuOpen = true;
     SetOwnModalUIOpen(true); // 期间 Ctrl+V 原生粘贴，不启动模拟
+    AppendMenuW(menu, MF_STRING, IDM_ENABLE, L"启用");
+    CheckMenuItem(menu, IDM_ENABLE,
+                  MF_BYCOMMAND | (SimulatedTypingEnabled() ? MF_CHECKED : MF_UNCHECKED));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_SPEED, L"修改打字速度");
     AppendMenuW(menu, MF_STRING, IDM_EXIT, L"退出 Simulated Typing");
 
@@ -179,7 +184,11 @@ void ShowTrayMenu() {
     DestroyMenu(menu);
     PostMessageW(g_hwnd, WM_NULL, 0, 0);
 
-    if (command == IDM_SPEED) {
+    if (command == IDM_ENABLE) {
+        // 翻转总开关，下次打开菜单显示新状态。打开菜单时在途模拟已被中止，
+        // 因此切换只影响之后的 Ctrl+V 触发。
+        SetSimulatedTypingEnabled(!SimulatedTypingEnabled());
+    } else if (command == IDM_SPEED) {
         DialogBoxParamW(g_hInst, MAKEINTRESOURCEW(IDD_SPEED), g_hwnd, SpeedDialogProc, 0);
     } else if (command == IDM_EXIT) {
         DestroyWindow(g_hwnd);
