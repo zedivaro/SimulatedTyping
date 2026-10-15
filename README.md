@@ -9,18 +9,22 @@
 模拟开始时先注入占位字符 <kbd>X</kbd> 并把光标移到它左侧，此后剪贴板内容
 逐字符插入在 X 之前——第一个内容键不再是行首，编辑器不会弹出自动补全；
 模拟结束或被中止时注入 <kbd>Delete</kbd> 删除占位的 X，文档中只留下真正
-的内容。
+的内容。换行前先以 <kbd>Space</kbd>+<kbd>Backspace</kbd> 击落可能挂起的
+补全建议（否则 <kbd>Enter</kbd> 会被编辑器当作“接受建议”）；换行后的
+<kbd>Space</kbd>+<kbd>Shift</kbd>+<kbd>Home</kbd>+<kbd>Backspace</kbd>
+清除自动缩进与辅助空格。
 
 | 模拟阶段 | 模拟的按键 |
 |----------------|------------|
 | 开始 | <kbd>X</kbd> → <kbd>←</kbd>（放置占位符） |
-| 换行符（`\r\n`、`\n` 或孤立的 `\r`） | <kbd>Enter</kbd> → <kbd>Space</kbd> → <kbd>Shift</kbd>+<kbd>Home</kbd> → <kbd>Backspace</kbd> |
+| 换行符（`\r\n`、`\n` 或孤立的 `\r`） | <kbd>Space</kbd> → <kbd>Backspace</kbd> → <kbd>Enter</kbd> → <kbd>Space</kbd> → <kbd>Shift</kbd>+<kbd>Home</kbd> → <kbd>Backspace</kbd> |
 | 制表符（`\t`） | <kbd>Tab</kbd> 键 |
 | 其他任意字符（含中文） | 字符本体（Unicode 注入） |
 | 结束 / 中止 | <kbd>Delete</kbd>（删除占位 X） |
 
-中止时若占位 X 尚未放置（只打了 X、还没打 ←），会以 Backspace 撤销它而
-不是 Delete；换行后尚未删除的辅助 Space 也会被补删。
+中止时的清理：占位 X 尚未放置（只打了 X、还没打 ←）时以 Backspace 撤销；
+击落补全的 Space 只打了一半时补 Backspace 还原行内容；换行后的辅助 Space
+尚未清理时补 Shift+Home + Backspace。
 
 ## 行为细节
 
@@ -86,8 +90,5 @@ build.bat
   - 换行后的「Shift+Home」依赖编辑器的智能 Home 语义（光标已在首个非空白
     字符处时移到第 0 列），主流编辑器行为一致；个别编辑器若不支持，最坏
     结果是行首残留自动缩进，不会丢失内容。
-  - 换行后的「Space + Ctrl+Backspace」依赖编辑器「Ctrl+Backspace 只删除
-    行内空白」的语义；个别编辑器（如 Visual Studio 的部分模式）可能跨行
-    删除上一行内容。如在某编辑器中粘贴含换行文本出现内容丢失，请反馈。
   - 目标窗口处于输入法组字（拼音未上屏）状态时，模拟按键可能被输入法
     消费，导致行为异常；请先让候选词上屏再触发粘贴。

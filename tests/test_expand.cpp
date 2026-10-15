@@ -32,6 +32,12 @@ bool IsShiftHome(const Action& a) {
     return a.kind == ActionKind::ShiftHome;
 }
 
+// 换行组动作布局：
+//   [0] Space  [1] Backspace   —— Enter 前击落可能挂起的补全建议
+//   [2] Enter
+//   [3] Space  [4] Shift+Home  [5] Backspace —— 清除新行自动缩进与辅助空格
+const size_t kNewlineActions = 6;
+
 } // namespace
 
 int main() {
@@ -78,16 +84,19 @@ int main() {
     }
 
     // 4. 换行组："\r\n" 单组、孤立 '\r' 单组、"\r\r" 两组
-    //    换行组动作：Enter、Space、Shift+Home（选中行首空白与辅助空格）、Backspace
+    //    换行组动作：Space、Backspace（击落补全）、Enter、Space、
+    //    Shift+Home（选中行首空白与辅助空格）、Backspace
     {
         auto a = ExpandTextGroups(L"\r\n");
         CHECK(a.size() == 2);
         if (a.size() == 2) {
-            CHECK(a[1].kind == ActionGroupKind::Newline && a[1].actions.size() == 4);
-            CHECK(IsVk(a[1].actions[0], VK_RETURN) && !a[1].actions[0].extended);
-            CHECK(IsVk(a[1].actions[1], VK_SPACE) && !a[1].actions[1].extended);
-            CHECK(IsShiftHome(a[1].actions[2]));
-            CHECK(IsVk(a[1].actions[3], VK_BACK) && !a[1].actions[3].extended);
+            CHECK(a[1].kind == ActionGroupKind::Newline && a[1].actions.size() == kNewlineActions);
+            CHECK(IsVk(a[1].actions[0], VK_SPACE) && !a[1].actions[0].extended);
+            CHECK(IsVk(a[1].actions[1], VK_BACK) && !a[1].actions[1].extended);
+            CHECK(IsVk(a[1].actions[2], VK_RETURN) && !a[1].actions[2].extended);
+            CHECK(IsVk(a[1].actions[3], VK_SPACE) && !a[1].actions[3].extended);
+            CHECK(IsShiftHome(a[1].actions[4]));
+            CHECK(IsVk(a[1].actions[5], VK_BACK) && !a[1].actions[5].extended);
         }
         auto b = ExpandTextGroups(L"\r");
         CHECK(b.size() == 2);
@@ -131,19 +140,27 @@ int main() {
         }
     }
 
-    // 8. 中止清理：Newline 组——Space 已打、Shift+Home/Backspace 未完成时
-    //    补齐剩余动作（选中行首空白并删除）
+    // 8. 中止清理：Newline 组按 6 动作布局逐进度推演
+    //    k=1（仅击落 Space）: 补 Backspace 还原行内容，Enter 尚未执行
+    //    k=2（击落完成）    : 行已还原，无残留
+    //    k=3（Enter 已打）  : 新行是预期内容，无辅助键残留
+    //    k=4（辅助 Space）  : 补 Shift+Home + Backspace 清除缩进与空格
+    //    k=5（已选中）      : 补 Backspace 删除选区
     {
         auto groups = ExpandTextGroups(L"\n");
         CHECK(groups.size() == 2);
         if (groups.size() == 2) {
             const ActionGroup& g = groups[1];
-            auto c2 = AbortCleanup(g, 2); // Enter+Space 已打：选中空格并删除
-            CHECK(c2.size() == 2 && IsShiftHome(c2[0]) && IsVk(c2[1], VK_BACK));
-            auto c3 = AbortCleanup(g, 3); // 空格已选中：补 Backspace 删除选区
-            CHECK(c3.size() == 1 && IsVk(c3[0], VK_BACK));
-            CHECK(AbortCleanup(g, 1).empty()); // 只有 Enter：无辅助键残留
-            CHECK(AbortCleanup(g, 4).empty()); // 组已完成
+            auto c1 = AbortCleanup(g, 1);
+            CHECK(c1.size() == 1 && IsVk(c1[0], VK_BACK));
+            CHECK(AbortCleanup(g, 2).empty());
+            CHECK(AbortCleanup(g, 3).empty());
+            auto c4 = AbortCleanup(g, 4);
+            CHECK(c4.size() == 2 && IsShiftHome(c4[0]) && IsVk(c4[1], VK_BACK));
+            auto c5 = AbortCleanup(g, 5);
+            CHECK(c5.size() == 1 && IsVk(c5[0], VK_BACK));
+            CHECK(AbortCleanup(g, 0).empty());
+            CHECK(AbortCleanup(g, 6).empty());
         }
     }
 
@@ -175,15 +192,17 @@ int main() {
     // 11. 扁平顺序：换行规则嵌在内容流中
     {
         auto a = ExpandText(L"a\n");
-        CHECK(a.size() == 2 + 1 + 4);
-        if (a.size() == 7) {
+        CHECK(a.size() == 2 + 1 + kNewlineActions);
+        if (a.size() == 9) {
             CHECK(IsUnicode(a[0], L'X'));
             CHECK(IsVk(a[1], VK_LEFT));
             CHECK(IsUnicode(a[2], L'a'));
-            CHECK(IsVk(a[3], VK_RETURN));
-            CHECK(IsVk(a[4], VK_SPACE));
-            CHECK(IsShiftHome(a[5]));
-            CHECK(IsVk(a[6], VK_BACK));
+            CHECK(IsVk(a[3], VK_SPACE));
+            CHECK(IsVk(a[4], VK_BACK));
+            CHECK(IsVk(a[5], VK_RETURN));
+            CHECK(IsVk(a[6], VK_SPACE));
+            CHECK(IsShiftHome(a[7]));
+            CHECK(IsVk(a[8], VK_BACK));
         }
     }
 
@@ -199,17 +218,20 @@ int main() {
         CHECK(groups.size() == 4);
         if (groups.size() == 4) {
             CHECK(groups[1].kind == ActionGroupKind::Char);
-            CHECK(groups[2].kind == ActionGroupKind::Newline && groups[2].actions.size() == 4);
+            CHECK(groups[2].kind == ActionGroupKind::Newline &&
+                  groups[2].actions.size() == kNewlineActions);
             CHECK(groups[3].kind == ActionGroupKind::Char);
         }
         auto a = ExpandText(L"a\r\nb");
-        CHECK(a.size() == 2 + 1 + 4 + 1);
-        if (a.size() == 8) {
+        CHECK(a.size() == 2 + 1 + kNewlineActions + 1);
+        if (a.size() == 10) {
             CHECK(IsUnicode(a[2], L'a'));
-            CHECK(IsVk(a[3], VK_RETURN));
-            CHECK(IsShiftHome(a[5]));
-            CHECK(IsVk(a[6], VK_BACK));
-            CHECK(IsUnicode(a[7], L'b'));
+            CHECK(IsVk(a[3], VK_SPACE));
+            CHECK(IsVk(a[4], VK_BACK));
+            CHECK(IsVk(a[5], VK_RETURN));
+            CHECK(IsShiftHome(a[7]));
+            CHECK(IsVk(a[8], VK_BACK));
+            CHECK(IsUnicode(a[9], L'b'));
         }
     }
 
@@ -232,10 +254,12 @@ int main() {
     // 15. extended 负向断言：Enter/Space/Backspace 不得误标扩展键
     {
         auto a = ExpandText(L"\n");
-        CHECK(a.size() == 6);
-        if (a.size() == 6) {
-            CHECK(IsVk(a[2], VK_RETURN) && !a[2].extended);
-            CHECK(IsVk(a[3], VK_SPACE) && !a[3].extended);
+        CHECK(a.size() == 2 + kNewlineActions);
+        if (a.size() == 8) {
+            CHECK(IsVk(a[2], VK_SPACE) && !a[2].extended);
+            CHECK(IsVk(a[3], VK_BACK) && !a[3].extended);
+            CHECK(IsVk(a[4], VK_RETURN) && !a[4].extended);
+            CHECK(IsVk(a[5], VK_SPACE) && !a[5].extended);
         }
         auto groups = ExpandTextGroups(L"x");
         CHECK(groups.size() == 2);

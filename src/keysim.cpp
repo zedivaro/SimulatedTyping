@@ -58,11 +58,15 @@ ActionGroup LeaderGroup() {
 ActionGroup NewlineGroup() {
     ActionGroup group;
     group.kind = ActionGroupKind::Newline;
-    group.actions.push_back(TapVk(VK_RETURN));
+    // Enter 前先以 Space+Backspace 击落可能挂起的补全建议：Space 让建议
+    // 失效、Backspace 还原行内容，Enter 因此不会被编辑器当作“接受建议”。
     group.actions.push_back(TapVk(VK_SPACE));
+    group.actions.push_back(TapVk(VK_BACK));
+    group.actions.push_back(TapVk(VK_RETURN));
     // 用「选中」代替「删除」：部分编辑器（如 Visual Studio）的 Ctrl+BS 会
     // 跨行删除，Shift+Home 只把选区扩展到行首（智能 Home 语义），Backspace
     // 仅删除选中的“行首空白+辅助空格”，换行本身不会被误删。
+    group.actions.push_back(TapVk(VK_SPACE));
     group.actions.push_back(ShiftHome());
     group.actions.push_back(TapVk(VK_BACK));
     return group;
@@ -120,12 +124,17 @@ std::vector<Action> AbortCleanup(const ActionGroup& group, size_t completed) {
         out.push_back(TapVk(VK_BACK));
         break;
     case ActionGroupKind::Newline:
-        // Enter 与 Space 已注入而选中+删除未完成时，Space 与行首空白是
-        // 辅助内容，补齐剩余动作（先选中再退格）；只有 Enter 时没有残留。
-        if (completed == 2) {
+        // 辅助键残留按进度补齐：
+        //   k=1（Enter 前的击落 Space） -> Backspace 还原行内容；
+        //   k=4（新行的辅助 Space）     -> Shift+Home 选中 + Backspace 删除；
+        //   k=5（已选中）               -> Backspace 删除选区。
+        // 其余进度无辅助键残留（k=3 的 Enter 是预期内容，予以保留）。
+        if (completed == 1) {
+            out.push_back(TapVk(VK_BACK));
+        } else if (completed == 4) {
             out.push_back(ShiftHome());
             out.push_back(TapVk(VK_BACK));
-        } else if (completed == 3) {
+        } else if (completed == 5) {
             out.push_back(TapVk(VK_BACK));
         }
         break;
